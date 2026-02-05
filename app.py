@@ -12,6 +12,8 @@ import io
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+import re  # [修復] 補上這行，解決 NameError: name 're' is not defined
+from PIL import Image
 
 # ==========================================
 # 0. 系統設定
@@ -67,7 +69,32 @@ DEFAULT_TYPES = {
 COST_CATEGORIES = [k for k, v in DEFAULT_TYPES.items() if v == 'cost']
 
 # ==========================================
-# 1. 🔐 登入驗證邏輯
+# 1. 全域工具函式 (移到最上方)
+# ==========================================
+def extract_image_from_note(note_str):
+    if not note_str: return None
+    # 確保轉成字串，避免 float/nan 錯誤
+    note_str = str(note_str)
+    match = re.search(r'\(圖:(.*?)\)', note_str)
+    if match: return match.group(1).strip()
+    return None
+
+def remove_image_tag(note_str):
+    if not note_str: return ""
+    note_str = str(note_str)
+    return re.sub(r'\(圖:.*?\)', '', note_str).strip()
+
+def get_date_info(date_obj):
+    weekdays = ["(週一)", "(週二)", "(週三)", "(週四)", "(週五)", "(週六)", "(週日)"]
+    date_str = date_obj.strftime("%Y-%m-%d")
+    w_str = weekdays[date_obj.weekday()]
+    is_weekend = date_obj.weekday() >= 5
+    if date_str in HOLIDAYS: return f"🔴 {w_str} ★{HOLIDAYS[date_str]}", True 
+    if is_weekend: return f"🔴 {w_str}", True 
+    return f"{w_str}", False
+
+# ==========================================
+# 2. 🔐 登入驗證邏輯
 # ==========================================
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -85,7 +112,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==========================================
-# 2. 核心邏輯 (資料讀寫層)
+# 3. 核心邏輯 (資料讀寫層)
 # ==========================================
 
 @st.cache_resource
@@ -119,16 +146,6 @@ def get_google_sheet():
         st.error(f"連線錯誤: {e}")
         return None
 
-def get_date_info(date_obj):
-    weekdays = ["(週一)", "(週二)", "(週三)", "(週四)", "(週五)", "(週六)", "(週日)"]
-    date_str = date_obj.strftime("%Y-%m-%d")
-    w_str = weekdays[date_obj.weekday()]
-    is_weekend = date_obj.weekday() >= 5
-    if date_str in HOLIDAYS: return f"🔴 {w_str} ★{HOLIDAYS[date_str]}", True 
-    if is_weekend: return f"🔴 {w_str}", True 
-    return f"{w_str}", False
-
-# [修復] 這裡修正了 try...with 的縮排錯誤
 def load_json(filepath, default_data):
     if not os.path.exists(filepath):
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -313,7 +330,7 @@ def create_zip_backup():
     return buffer
 
 # ==========================================
-# 3. 初始化與快取
+# 4. 初始化與快取
 # ==========================================
 settings_data = load_settings()
 category_types = load_json(TYPES_FILE, DEFAULT_TYPES)
@@ -337,7 +354,7 @@ if 'last_check_date' not in st.session_state:
     st.session_state.last_check_date = st.session_state.mem_date
 
 # ==========================================
-# 4. 主畫面 (只有登入成功才會執行到這裡)
+# 5. 主畫面 (只有登入成功才會執行到這裡)
 # ==========================================
 st.title("🏗️ 多專案施工管理系統 (完美同步版)")
 
@@ -469,6 +486,7 @@ else:
                     
                     c_q, c_p = st.columns(2)
                     with c_q: cost_qty = st.number_input("數量", min_value=0.0, step=0.5, value=1.0, key=f"qty_{cat}_{d_key}_{cost_item}")
+                    # 使用動態key來確保切換項目時更新數值
                     with c_p: cost_price = st.number_input("單價 ($)", value=float(item_setting["price"]), step=100.0, key=f"price_{cat}_{d_key}_{cost_item}")
                     
                     cost_unit = st.text_input("單位", value=item_setting["unit"], key=f"unit_{cat}_{d_key}_{cost_item}")
@@ -516,16 +534,6 @@ else:
             with c3: search = st.text_input("搜尋關鍵字", key="search_key")
             st.divider()
             
-            def extract_image_from_note(note_str):
-                if not note_str: return None
-                match = re.search(r'\(圖:(.*?)\)', str(note_str))
-                if match: return match.group(1).strip()
-                return None
-
-            def remove_image_tag(note_str):
-                if not note_str: return ""
-                return re.sub(r'\(圖:.*?\)', '', str(note_str)).strip()
-
             def render_section(display_title, cats, key, cost=False, qty=False):
                 sk = f"conf_{key}"
                 if sk not in st.session_state:
@@ -903,6 +911,7 @@ else:
                                     save_settings(settings_data)
                                     st.rerun()
                                     
+                        # [恢復功能] 顯示並可編輯單價/單位
                         if cat in COST_CATEGORIES:
                             st.caption("💰 預設單價與單位")
                             for item_name in curr_list:
