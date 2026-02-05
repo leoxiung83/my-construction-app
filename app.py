@@ -25,7 +25,7 @@ SYSTEM_PASSWORD = "12345"
 
 # --- 📁 雲端硬碟設定 (請修改這裡！) ---
 # 請將這裡換成您剛剛建立的「Google Drive 資料夾 ID」
-IMAGE_FOLDER_ID = "請將此處替換為您的資料夾ID" 
+IMAGE_FOLDER_ID = "1dZ5r30HOwsn_026xF8dAxrzK5ZpqzAQS" 
 
 # --- 檔案路徑 ---
 DATA_FILE = 'construction_data.csv' 
