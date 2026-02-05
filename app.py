@@ -57,7 +57,7 @@ DEFAULT_TYPES = {
 COST_CATEGORIES = [k for k, v in DEFAULT_TYPES.items() if v == 'cost']
 
 # ==========================================
-# 1. 核心邏輯 (雲端/本機 雙模式 - 強化日期容錯)
+# 1. 核心邏輯 (雲端/本機 雙模式 - 自動刷新版)
 # ==========================================
 
 @st.cache_resource
@@ -180,19 +180,11 @@ def load_data():
             '現場文字紀錄': '相關紀錄', '相關紀錄(會議、會勘、走動管理等)': '相關紀錄'
         })
         
-        # --- 關鍵修正：智慧日期解析 ---
-        # 使用 errors='coerce' 讓看不懂的日期變成 NaT (空值)，而不是直接報錯 Crash
+        # 智慧日期解析
         df['日期'] = pd.to_datetime(df['日期'], errors='coerce')
-        
-        # 移除日期無效的行 (避免整頁壞掉)
         df = df.dropna(subset=['日期'])
-        
-        # 轉回純日期格式 (去除時間 00:00:00)
         df['日期'] = df['日期'].dt.date
-        
-        # 重新計算月份
         df['月份'] = pd.to_datetime(df['日期']).dt.strftime("%Y-%m")
-        # ---------------------------
 
         for col in ['總價', '數量', '單價']: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
@@ -334,7 +326,7 @@ else:
                         txt_content = st.text_area("內容", height=100, key=f"area_status_{d_key}")
                         if st.form_submit_button("💾 儲存"):
                             append_data(global_date, global_project, real_cat, txt_item, "式", 1, 0, txt_content)
-                            st.toast("已儲存"); time.sleep(0.5)
+                            st.toast("已儲存"); time.sleep(0.5); st.rerun() # 自動重整
             with cols_g1[1]:
                 real_cat = next((c for c in current_items if "紀錄" in c or "記錄" in c), None)
                 if real_cat:
@@ -344,7 +336,7 @@ else:
                         txt_content = st.text_area("內容", height=100, key=f"area_records_{d_key}")
                         if st.form_submit_button("💾 儲存"):
                             append_data(global_date, global_project, real_cat, txt_item, "式", 1, 0, txt_content)
-                            st.toast("已儲存"); time.sleep(0.5)
+                            st.toast("已儲存"); time.sleep(0.5); st.rerun() # 自動重整
 
         with st.expander("🚛 02. 進料管理紀錄", expanded=True):
             real_cat = next((c for c in current_items if "進料" in c), None)
@@ -361,7 +353,7 @@ else:
                             in_note = st.text_input("備註", key=f"in_n_{i}_{d_key}")
                             if st.form_submit_button("💾 儲存"):
                                 append_data(global_date, global_project, real_cat, in_item, in_unit, in_qty, 0, in_note)
-                                st.toast("已儲存"); time.sleep(0.5)
+                                st.toast("已儲存"); time.sleep(0.5); st.rerun() # 自動重整
 
         with st.expander("🧱 03. 用料管理紀錄", expanded=True):
             real_cat = next((c for c in current_items if "用料" in c), None)
@@ -378,7 +370,7 @@ else:
                             use_note = st.text_input("備註", key=f"use_n_{i}_{d_key}")
                             if st.form_submit_button("💾 儲存"):
                                 append_data(global_date, global_project, real_cat, use_item, use_unit, use_qty, 0, use_note)
-                                st.toast("已儲存"); time.sleep(0.5)
+                                st.toast("已儲存"); time.sleep(0.5); st.rerun() # 自動重整
 
         with st.expander("👷 04. 人力與機具出工紀錄", expanded=True):
             cols_g4 = st.columns(2)
@@ -397,7 +389,7 @@ else:
                     cost_note = st.text_input("備註", key=f"note_{unique_key}")
                     if st.button(f"💾 新增工種", type="primary", key=f"btn_{unique_key}"):
                         append_data(global_date, global_project, cat, cost_item, cost_unit, cost_qty, cost_price, cost_note)
-                        st.toast("已儲存"); time.sleep(0.5); st.rerun()
+                        st.toast("已儲存"); time.sleep(0.5); st.rerun() # 自動重整
 
             with cols_g4[1]:
                 cat = next((c for c in current_items if "機具" in c), None)
@@ -414,7 +406,7 @@ else:
                     cost_note = st.text_input("備註", key=f"note_{unique_key}")
                     if st.button(f"💾 新增機具", type="primary", key=f"btn_{unique_key}"):
                         append_data(global_date, global_project, cat, cost_item, cost_unit, cost_qty, cost_price, cost_note)
-                        st.toast("已儲存"); time.sleep(0.5); st.rerun()
+                        st.toast("已儲存"); time.sleep(0.5); st.rerun() # 自動重整
 
     with tab_data:
         proj_df = df[df['專案'] == global_project].copy()
