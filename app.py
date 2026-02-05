@@ -10,22 +10,16 @@ import streamlit.components.v1 as components
 import zipfile
 import io
 import gspread
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
 # ==========================================
 # 0. 系統設定
 # ==========================================
-st.set_page_config(page_title="多專案施工管理系統 (圖文整合版)", layout="wide", page_icon="📸")
+st.set_page_config(page_title="多專案施工管理系統 (安全登入版)", layout="wide", page_icon="🔒")
 
-# --- 🔐 安全設定 ---
-SYSTEM_PASSWORD = "12345"
-
-# --- 📁 雲端硬碟設定 (請修改這裡！) ---
-# 請將這裡換成您剛剛建立的「Google Drive 資料夾 ID」
-IMAGE_FOLDER_ID = "1dZ5r30HOwsn_026xF8dAxrzK5ZpqzAQS" 
+# --- 🔐 安全設定 (修改這裡的密碼) ---
+SYSTEM_PASSWORD = "225088"  # <--- 請在這裡修改您的登入密碼
 
 # --- 檔案路徑 ---
 DATA_FILE = 'construction_data.csv' 
@@ -68,7 +62,7 @@ DEFAULT_TYPES = {
 COST_CATEGORIES = [k for k, v in DEFAULT_TYPES.items() if v == 'cost']
 
 # ==========================================
-# 1. 🔐 登入驗證
+# 1. 🔐 登入驗證邏輯 (守門員)
 # ==========================================
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -77,71 +71,58 @@ def check_login():
     if st.session_state.password_input == SYSTEM_PASSWORD:
         st.session_state.logged_in = True
     else:
-        st.error("❌ 密碼錯誤")
+        st.error("❌ 密碼錯誤，請重試。")
 
 if not st.session_state.logged_in:
     st.markdown("## 🔒 系統鎖定")
-    st.markdown("請輸入密碼以繼續。")
-    st.text_input("密碼：", type="password", key="password_input", on_change=check_login)
+    st.markdown("為了保護專案資料，請輸入密碼以繼續。")
+    st.text_input("請輸入密碼：", type="password", key="password_input", on_change=check_login)
     st.stop()
 
 # ==========================================
-# 2. 核心邏輯 (Drive & Sheets)
+# 2. 核心邏輯 (資料讀寫層)
 # ==========================================
 
 @st.cache_resource
-def get_credentials():
-    """統一取得憑證"""
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    if os.path.exists(KEY_FILE):
-        return ServiceAccountCredentials.from_json_keyfile_name(KEY_FILE, scope)
-    elif "gcp_service_account" in st.secrets:
-        return ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
-    return None
-
 def get_google_sheet():
-    creds = get_credentials()
-    if not creds:
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = None
+    if os.path.exists(KEY_FILE):
+        try:
+            creds = ServiceAccountCredentials.from_json_keyfile_name(KEY_FILE, scope)
+        except Exception as e:
+            st.error(f"本機金鑰錯誤: {e}")
+            return None
+    else:
+        try:
+            if "gcp_service_account" in st.secrets:
+                creds_dict = st.secrets["gcp_service_account"]
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        except Exception:
+            return None
+            
+    if creds is None:
         return None
+        
     try:
         client = gspread.authorize(creds)
-        return client.open(SHEET_NAME).sheet1
+        sheet = client.open(SHEET_NAME).sheet1
+        return sheet
     except gspread.SpreadsheetNotFound:
         return "NOT_FOUND"
     except Exception as e:
-        st.error(f"Sheet 連線錯誤: {e}")
-        return None
-
-def upload_image_to_drive(image_file, filename):
-    """上傳圖片到 Google Drive 並回傳連結"""
-    creds = get_credentials()
-    if not creds:
-        return None
-    
-    try:
-        # 建構 Drive 服務
-        service = build('drive', 'v3', credentials=creds)
-        
-        file_metadata = {'name': filename, 'parents': [IMAGE_FOLDER_ID]}
-        media = MediaIoBaseUpload(image_file, mimetype=image_file.type)
-        
-        file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-        return file.get('webViewLink')
-    except Exception as e:
-        st.error(f"圖片上傳失敗: {e} (請檢查是否已啟用 Drive API 並設定正確資料夾 ID)")
+        st.error(f"連線錯誤: {e}")
         return None
 
 def get_date_info(date_obj):
     weekdays = ["(週一)", "(週二)", "(週三)", "(週四)", "(週五)", "(週六)", "(週日)"]
     date_str = date_obj.strftime("%Y-%m-%d")
     w_str = weekdays[date_obj.weekday()]
-    if date_str in HOLIDAYS:
-        return f"🔴 {w_str} ★{HOLIDAYS[date_str]}", True 
-    if date_obj.weekday() >= 5:
-        return f"🔴 {w_str}", True 
+    is_weekend = date_obj.weekday() >= 5
+    if date_str in HOLIDAYS: return f"🔴 {w_str} ★{HOLIDAYS[date_str]}", True 
+    if is_weekend: return f"🔴 {w_str}", True 
     return f"{w_str}", False
 
-# --- 資料存取函式 ---
 def load_json(filepath, default_data):
     if not os.path.exists(filepath):
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -172,7 +153,7 @@ def load_prices():
 
 def save_prices(data):
     save_json(PRICES_FILE, data)
-
+    
 def save_types(data):
     save_json(TYPES_FILE, data)
 
@@ -231,29 +212,7 @@ def save_dataframe(df):
     except Exception as e:
         st.error(f"存檔錯誤: {e}")
 
-def append_data(date, project, category, name, unit, qty, price, note, image_file=None):
-    """新增資料 (含圖片上傳)"""
-    # 如果有圖片，先上傳
-    if image_file is not None:
-        if IMAGE_FOLDER_ID == "請將此處替換為您的資料夾ID":
-            st.error("⚠️ 請先設定程式碼中的 IMAGE_FOLDER_ID 才能上傳圖片！")
-            return
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{project}_{category}_{name}_{timestamp}.jpg"
-        
-        with st.spinner('📸 正在上傳照片到雲端...'):
-            img_url = upload_image_to_drive(image_file, filename)
-        
-        if img_url:
-            # 將連結附在備註後方
-            if note:
-                note += f" (圖: {img_url})"
-            else:
-                note = f"(圖: {img_url})"
-        else:
-            st.warning("圖片上傳失敗，僅儲存文字資料。")
-
+def append_data(date, project, category, name, unit, qty, price, note):
     total = qty * price if category in COST_CATEGORIES else 0
     row = [str(date), project, category, name, unit, qty, price, total, note]
     try:
@@ -261,18 +220,20 @@ def append_data(date, project, category, name, unit, qty, price, note, image_fil
         if sheet and sheet != "NOT_FOUND":
             sheet.append_row(row)
         else:
-            st.error("無法連線至雲端")
+            st.error("寫入錯誤")
     except Exception as e:
-        st.error(f"寫入錯誤: {e}")
+        st.error(f"寫入例外: {e}")
 
 def update_by_scope(original_df, edited_part, proj, month, cats):
     original_df['temp_month'] = pd.to_datetime(original_df['日期']).dt.strftime("%Y-%m")
     mask = (original_df['temp_month'] == month) & (original_df['專案'] == proj) & (original_df['類別'].isin(cats))
     df_kept = original_df[~mask].copy()
+    
     edited_clean = edited_part.drop(columns=[c for c in ['刪除', '星期/節日'] if c in edited_part.columns])
     for col in ['數量', '單價']:
         edited_clean[col] = pd.to_numeric(edited_clean[col], errors='coerce').fillna(0)
     edited_clean['總價'] = edited_clean.apply(lambda r: r['數量']*r['單價'] if r['類別'] in COST_CATEGORIES else 0, axis=1)
+    
     return pd.concat([df_kept, edited_clean], ignore_index=True)
 
 def rename_project_logic(old_name, new_name, settings, prices):
@@ -281,10 +242,12 @@ def rename_project_logic(old_name, new_name, settings, prices):
     idx = settings["projects"].index(old_name)
     settings["projects"][idx] = new_name
     settings["items"][new_name] = settings["items"].pop(old_name)
+    
     if old_name in prices:
         prices[new_name] = prices.pop(old_name)
     save_prices(prices)
     save_settings(settings)
+    
     df = load_data()
     if not df.empty:
         df.loc[df['專案'] == old_name, '專案'] = new_name
@@ -296,9 +259,11 @@ def rename_item_in_project(project, category, old_item, new_item, settings, pric
     if new_item in curr:
         return False
     curr[curr.index(old_item)] = new_item
+    
     if project in prices and category in prices[project] and old_item in prices[project][category]:
         prices[project][category][new_item] = prices[project][category].pop(old_item)
         save_prices(prices)
+        
     df = load_data()
     if not df.empty:
         df.loc[(df['專案']==project) & (df['類別']==category) & (df['名稱']==old_item), '名稱'] = new_item
@@ -320,7 +285,7 @@ def create_zip_backup():
     return buffer
 
 # ==========================================
-# 3. 初始化
+# 3. 初始化與快取
 # ==========================================
 settings_data = load_settings()
 category_types = load_json(TYPES_FILE, DEFAULT_TYPES)
@@ -333,6 +298,7 @@ for c in all_cats:
     if c not in category_types:
         category_types[c] = "text"
 save_json(TYPES_FILE, category_types)
+
 df = load_data()
 
 if 'mem_project' not in st.session_state:
@@ -343,9 +309,9 @@ if 'last_check_date' not in st.session_state:
     st.session_state.last_check_date = st.session_state.mem_date
 
 # ==========================================
-# 4. 主畫面
+# 4. 主畫面 (只有登入成功才會執行到這裡)
 # ==========================================
-st.title("🏗️ 多專案施工管理系統 (圖文整合版)")
+st.title("🏗️ 多專案施工管理系統 (完美同步版)")
 
 sheet_status = get_google_sheet()
 if sheet_status is None:
@@ -359,24 +325,30 @@ else:
         idx_proj = proj_list.index(st.session_state.mem_project)
         global_project = st.selectbox("🏗️ 目前專案", proj_list, index=idx_proj, key="global_proj")
         global_date = st.date_input("📅 工作日期", st.session_state.mem_date, key="global_date")
+        
         if global_date != st.session_state.last_check_date:
             st.session_state.last_check_date = global_date
             components.html("""<script>var tabs=window.parent.document.querySelectorAll('[data-testid="stTab"]');if(tabs.length>0){tabs[0].click();}</script>""", height=0, width=0)
+            
         day_str, is_red_day = get_date_info(global_date)
         if is_red_day:
             st.markdown(f"<h3 style='color: #FF4B4B;'>{global_date} {day_str}</h3>", unsafe_allow_html=True)
         else:
             st.markdown(f"### {global_date} {day_str}")
+            
         st.session_state.mem_project = global_project
         st.session_state.mem_date = global_date
+        
         if global_project not in settings_data["items"]:
             settings_data["items"][global_project] = copy.deepcopy(DEFAULT_TEMPLATE)
             save_settings(settings_data)
         current_items = settings_data["items"][global_project]
+        
         st.divider()
         if st.button("🔄 強制重新整理資料"):
             st.cache_resource.clear()
             st.rerun()
+            
         if st.button("🔒 登出系統"):
             st.session_state.logged_in = False
             st.rerun()
@@ -387,7 +359,6 @@ else:
         st.info(f"正在填寫：**{global_project}** / **{global_date} {day_str}**")
         d_key = str(global_date)
         
-        # 1. 施工說明 & 相關紀錄 (含圖片)
         with st.expander("📝 01. 施工說明及相關紀錄", expanded=True):
             cols_g1 = st.columns(2)
             with cols_g1[0]: 
@@ -397,9 +368,8 @@ else:
                     with st.form(key=f"form_status_{d_key}"):
                         txt_item = st.selectbox("項目", current_items[real_cat], key=f"sel_status_{d_key}")
                         txt_content = st.text_area("內容", height=100, key=f"area_status_{d_key}")
-                        img_file = st.file_uploader("📷 上傳照片 (選填)", type=['png', 'jpg', 'jpeg'], key=f"img_status_{d_key}")
                         if st.form_submit_button("💾 儲存說明"):
-                            append_data(global_date, global_project, real_cat, txt_item, "式", 1, 0, txt_content, img_file)
+                            append_data(global_date, global_project, real_cat, txt_item, "式", 1, 0, txt_content)
                             st.toast("已儲存，同步中...")
                             time.sleep(1.5)
                             st.rerun()
@@ -410,14 +380,12 @@ else:
                     with st.form(key=f"form_records_{d_key}"):
                         txt_item = st.selectbox("項目", current_items[real_cat], key=f"sel_records_{d_key}")
                         txt_content = st.text_area("內容", height=100, key=f"area_records_{d_key}")
-                        img_file = st.file_uploader("📷 上傳照片 (選填)", type=['png', 'jpg', 'jpeg'], key=f"img_records_{d_key}")
                         if st.form_submit_button("💾 儲存紀錄"):
-                            append_data(global_date, global_project, real_cat, txt_item, "式", 1, 0, txt_content, img_file)
+                            append_data(global_date, global_project, real_cat, txt_item, "式", 1, 0, txt_content)
                             st.toast("已儲存，同步中...")
                             time.sleep(1.5)
                             st.rerun()
 
-        # 2. 進料 (含圖片)
         with st.expander("🚛 02. 進料管理紀錄", expanded=True):
             real_cat = next((c for c in current_items if "進料" in c), None)
             if real_cat:
@@ -431,14 +399,12 @@ else:
                             with c_q: in_qty = st.number_input("數量", min_value=0.0, step=1.0, key=f"in_q_{i}_{d_key}")
                             with c_u: in_unit = st.text_input("單位", value="式", key=f"in_u_{i}_{d_key}")
                             in_note = st.text_input("備註", key=f"in_n_{i}_{d_key}")
-                            img_file = st.file_uploader("📷 照片", type=['png', 'jpg', 'jpeg'], key=f"img_in_{i}_{d_key}")
                             if st.form_submit_button("💾 儲存進料"):
-                                append_data(global_date, global_project, real_cat, in_item, in_unit, in_qty, 0, in_note, img_file)
+                                append_data(global_date, global_project, real_cat, in_item, in_unit, in_qty, 0, in_note)
                                 st.toast("已儲存，同步中...")
                                 time.sleep(1.5)
                                 st.rerun()
 
-        # 3. 用料
         with st.expander("🧱 03. 用料管理紀錄", expanded=True):
             real_cat = next((c for c in current_items if "用料" in c), None)
             if real_cat:
@@ -458,7 +424,6 @@ else:
                                 time.sleep(1.5)
                                 st.rerun()
 
-        # 4. 人力機具
         with st.expander("👷 04. 人力與機具出工紀錄", expanded=True):
             cols_g4 = st.columns(2)
             with cols_g4[0]:
