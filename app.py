@@ -19,7 +19,7 @@ from datetime import datetime
 st.set_page_config(page_title="多專案施工管理系統 (安全登入版)", layout="wide", page_icon="🔒")
 
 # --- 🔐 安全設定 (修改這裡的密碼) ---
-SYSTEM_PASSWORD = "12345"  # <--- 請在這裡修改您的登入密碼
+SYSTEM_PASSWORD = "225088"  # <--- 請在這裡修改您的登入密碼
 
 # --- 檔案路徑 ---
 DATA_FILE = 'construction_data.csv' 
