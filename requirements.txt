@@ -3,3 +3,6 @@ pandas
 altair
 gspread
 oauth2client
+google-api-python-client  <-- 新增這行
+google-auth-httplib2      <-- 新增這行
+google-auth-oauthlib      <-- 新增這行
