@@ -57,30 +57,33 @@ DEFAULT_TYPES = {
 COST_CATEGORIES = [k for k, v in DEFAULT_TYPES.items() if v == 'cost']
 
 # ==========================================
-# 1. 核心邏輯 (雲端/本機 雙模式)
+# 1. 核心邏輯 (雲端/本機 雙模式 - 強化日期容錯)
 # ==========================================
 
 @st.cache_resource
 def get_google_sheet():
     """建立並快取 Google Sheet 連線 (支援雲端 Secrets 與 本機檔案)"""
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = None
     
-    # 優先嘗試讀取 Streamlit 雲端保險箱 (Secrets) - 手機版用
-    if "gcp_service_account" in st.secrets:
-        try:
-            creds_dict = st.secrets["gcp_service_account"]
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        except Exception as e:
-            st.error(f"雲端 Secrets 設定錯誤: {e}")
-            return None
-    # 如果雲端沒設定，才讀取電腦裡的檔案 - 電腦版用
-    elif os.path.exists(KEY_FILE):
+    # 1. 優先檢查本機有沒有 service_key.json (電腦版模式)
+    if os.path.exists(KEY_FILE):
         try:
             creds = ServiceAccountCredentials.from_json_keyfile_name(KEY_FILE, scope)
         except Exception as e:
             st.error(f"本機金鑰讀取錯誤: {e}")
             return None
+            
+    # 2. 如果本機沒有檔案，再嘗試讀取 Streamlit Secrets (雲端/手機版模式)
     else:
+        try:
+            if "gcp_service_account" in st.secrets:
+                creds_dict = st.secrets["gcp_service_account"]
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        except Exception:
+            return None
+
+    if creds is None:
         return None
 
     try:
@@ -145,6 +148,7 @@ def save_prices(data): save_json(PRICES_FILE, data)
 def save_types(data): save_json(TYPES_FILE, data)
 
 def load_data():
+    """從 Google Sheet 讀取資料 (強化日期相容性)"""
     cols = ['日期', '專案', '類別', '名稱', '單位', '數量', '單價', '總價', '備註', '月份']
     sheet = get_google_sheet()
     
@@ -158,17 +162,38 @@ def load_data():
     try:
         data = sheet.get_all_records()
         if not data: return pd.DataFrame(columns=cols)
+        
+        # 先轉 DataFrame
         df = pd.DataFrame(data)
+        
+        # 補齊缺失欄位
         for c in cols:
             if c not in df.columns: df[c] = ""
+            
+        # 確保文字欄位是字串
         for col in ['專案', '類別', '名稱', '單位', '備註']:
             df[col] = df[col].fillna("").astype(str)
+            
+        # 類別名稱修正 (相容舊資料)
         df['類別'] = df['類別'].replace({
             '本日施工概況': '施工說明', '01.本日施工概況': '施工說明',
             '現場文字紀錄': '相關紀錄', '相關紀錄(會議、會勘、走動管理等)': '相關紀錄'
         })
-        df['日期'] = pd.to_datetime(df['日期']).dt.date
+        
+        # --- 關鍵修正：智慧日期解析 ---
+        # 使用 errors='coerce' 讓看不懂的日期變成 NaT (空值)，而不是直接報錯 Crash
+        df['日期'] = pd.to_datetime(df['日期'], errors='coerce')
+        
+        # 移除日期無效的行 (避免整頁壞掉)
+        df = df.dropna(subset=['日期'])
+        
+        # 轉回純日期格式 (去除時間 00:00:00)
+        df['日期'] = df['日期'].dt.date
+        
+        # 重新計算月份
         df['月份'] = pd.to_datetime(df['日期']).dt.strftime("%Y-%m")
+        # ---------------------------
+
         for col in ['總價', '數量', '單價']: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
     except Exception as e:
