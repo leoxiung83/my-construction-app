@@ -19,10 +19,10 @@ from datetime import datetime
 st.set_page_config(page_title="多專案施工管理系統 (安全登入版)", layout="wide", page_icon="🔒")
 
 # --- 🔐 安全設定 (修改這裡的密碼) ---
-SYSTEM_PASSWORD = "12345"  # <--- 請在這裡修改您的登入密碼
+SYSTEM_PASSWORD = "12345"
 
 # --- 檔案路徑 ---
-DATA_FILE = 'construction_data.csv' 
+DATA_FILE = 'construction_data.csv'
 SETTINGS_FILE = 'settings.json'
 TYPES_FILE = 'category_types.json'
 PRICES_FILE = 'item_prices.json'
@@ -67,7 +67,7 @@ DEFAULT_TYPES = {
 COST_CATEGORIES = [k for k, v in DEFAULT_TYPES.items() if v == 'cost']
 
 # ==========================================
-# 1. 🔐 登入驗證邏輯 (守門員)
+# 1. 🔐 登入驗證邏輯
 # ==========================================
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -128,6 +128,7 @@ def get_date_info(date_obj):
     if is_weekend: return f"🔴 {w_str}", True 
     return f"{w_str}", False
 
+# [修復] 這裡修正了 try...with 的縮排錯誤
 def load_json(filepath, default_data):
     if not os.path.exists(filepath):
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -468,7 +469,6 @@ else:
                     
                     c_q, c_p = st.columns(2)
                     with c_q: cost_qty = st.number_input("數量", min_value=0.0, step=0.5, value=1.0, key=f"qty_{cat}_{d_key}_{cost_item}")
-                    # 使用動態key來確保切換項目時更新數值
                     with c_p: cost_price = st.number_input("單價 ($)", value=float(item_setting["price"]), step=100.0, key=f"price_{cat}_{d_key}_{cost_item}")
                     
                     cost_unit = st.text_input("單位", value=item_setting["unit"], key=f"unit_{cat}_{d_key}_{cost_item}")
@@ -903,7 +903,6 @@ else:
                                     save_settings(settings_data)
                                     st.rerun()
                                     
-                        # [恢復功能] 顯示並可編輯單價/單位
                         if cat in COST_CATEGORIES:
                             st.caption("💰 預設單價與單位")
                             for item_name in curr_list:
