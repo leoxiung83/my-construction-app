@@ -7,7 +7,7 @@ from googleapiclient.http import MediaIoBaseUpload
 import json
 import time
 import io
-import re  # [修復] 確保 re 在最上方被匯入
+import re
 from datetime import datetime
 from PIL import Image
 
@@ -23,10 +23,9 @@ SYSTEM_PASSWORD = "12345"
 KEY_FILE = 'service_key.json'
 SHEET_NAME = 'construction_db'
 CONFIG_SHEET_NAME = 'System_Config'
-PHOTO_DIR = 'uploaded_photos'
 
-if not os.path.exists(PHOTO_DIR):
-    os.makedirs(PHOTO_DIR)
+# 線上版不需要本地照片資料夾，這裡僅作為暫存路徑變數（若有用到）
+PHOTO_DIR = 'temp_photos' 
 
 # --- 台灣例假日 ---
 HOLIDAYS = {
@@ -60,7 +59,7 @@ DEFAULT_ITEMS = {
 DEFAULT_TYPES = {item["key"]: item["type"] for item in DEFAULT_CAT_CONFIG}
 
 # ==========================================
-# 1. 全域工具函式 (移到最上方，避免 NameError)
+# 1. 全域工具函式
 # ==========================================
 def get_date_info(date_obj):
     weekdays = ["(週一)", "(週二)", "(週三)", "(週四)", "(週五)", "(週六)", "(週日)"]
@@ -122,11 +121,9 @@ def get_google_client():
     return None
 
 def get_drive_service():
-    # 這裡也要重新取得 creds，因為 build 需要原生的 credentials 物件
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
         if "gcp_service_account" in st.secrets:
-            # 這裡需要轉換成 google.oauth2.service_account.Credentials
             return build('drive', 'v3', credentials=Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope))
         elif os.path.exists(KEY_FILE):
              return build('drive', 'v3', credentials=Credentials.from_service_account_file(KEY_FILE, scopes=scope))
@@ -138,7 +135,6 @@ def upload_image_to_drive(image_file, filename):
     service = get_drive_service()
     if not service: return None
     
-    # 從 secrets 讀取資料夾 ID
     folder_id = st.secrets.get("IMAGE_FOLDER_ID", "")
     if not folder_id: return None
 
@@ -170,7 +166,6 @@ def load_settings_online():
                         data["items"][proj][cat["key"]] = []
             return data
         except:
-            # 初始化
             default_data = {
                 "projects": ["預設專案"],
                 "items": {"預設專案": DEFAULT_ITEMS},
@@ -383,8 +378,8 @@ with tab_entry:
                         opts = current_items.get(conf["key"], [])
                         it = st.selectbox("材料", opts if opts else ["(請新增)"], key=f"s_{idx}_{k}")
                         c1, c2 = st.columns(2)
-                        qt = c1.number_input("數量", min_value=0.0, step=1.0, key=f"q_{idx}_{k}")
-                        un = c2.text_input("單位", value="式", key=f"u_{idx}_{k}")
+                        qt = c1.number_input("數量", 0.0, step=1.0, key=f"q_{idx}_{k}")
+                        un = c2.text_input("單位", "式", key=f"u_{idx}_{k}")
                         nt = st.text_input("備註", key=f"n_{idx}_{k}")
                         img_file = st.file_uploader("照", type=['jpg','png'], key=f"m_{idx}_{k}")
                         if st.form_submit_button("💾"):
@@ -402,8 +397,8 @@ with tab_entry:
                         opts = current_items.get(conf["key"], [])
                         it = st.selectbox("材料", opts if opts else ["(請新增)"], key=f"s_{idx}_{k}")
                         c1, c2 = st.columns(2)
-                        qt = c1.number_input("數量", min_value=0.0, step=0.5, key=f"q_{idx}_{k}")
-                        un = c2.text_input("單位", value="m3", key=f"u_{idx}_{k}")
+                        qt = c1.number_input("數量", 0.0, step=0.5, key=f"q_{idx}_{k}")
+                        un = c2.text_input("單位", "m3", key=f"u_{idx}_{k}")
                         nt = st.text_input("備註", key=f"n_{idx}_{k}")
                         if st.form_submit_button("💾"):
                             process_append(conf["key"], conf["type"], it, un, qt, 0, nt, None)
@@ -496,9 +491,6 @@ with tab_data:
         st.divider()
 
         def render_online_section(cat_key, cat_disp, cat_type, key):
-            sk = f"conf_{key}"
-            if sk not in st.session_state: st.session_state[sk] = False
-            
             sec_df = month_df[month_df['類別'] == cat_key].copy()
             if not sec_df.empty:
                 st.subheader(cat_disp)
@@ -507,11 +499,9 @@ with tab_data:
                 if search: mask = view.apply(lambda x: search in str(x['名稱']) or search in str(x['備註']), axis=1); view = view[mask]
                 
                 if not view.empty:
-                    # 顯示優化
-                    view['備註_顯示'] = view['備註'].apply(lambda x: format_note_for_display(x))
-                    display_df = view.drop(columns=['備註']) # 移除原始備註
+                    view['備註_顯示'] = view['備註'].apply(lambda x: f"✅ {remove_image_tag(x)}" if extract_image_from_note(x) else remove_image_tag(x))
+                    display_df = view.drop(columns=['備註']) 
                     
-                    # 欄位設定
                     col_cfg = {
                         "備註_顯示": st.column_config.TextColumn(label="備註 (✅=有圖)", width="large"),
                         "日期": st.column_config.TextColumn(width="small"),
@@ -526,7 +516,6 @@ with tab_data:
                         num_rows="dynamic" # 允許刪除
                     )
                     
-                    # 檢查刪除
                     if len(edited) < len(display_df):
                         deleted_indices = set(display_df.index) - set(edited.index)
                         if deleted_indices:
@@ -536,7 +525,6 @@ with tab_data:
                                 st.success("已刪除")
                                 time.sleep(1); st.rerun()
 
-                    # 圖片檢視 (列出連結)
                     st.caption("📸 照片連結：")
                     has_img = False
                     for idx, row in view.iterrows():
@@ -585,11 +573,9 @@ with tab_settings:
                     idx = settings_data["projects"].index(global_project)
                     settings_data["projects"][idx] = ren_p
                     settings_data["items"][ren_p] = settings_data["items"].pop(global_project)
-                    # 價格同步
                     if global_project in price_data:
                         price_data[ren_p] = price_data.pop(global_project)
                         settings_data["prices"] = price_data
-                    
                     save_settings_online(settings_data)
                     with st.spinner("更新歷史資料中..."):
                         df.loc[df['專案'] == global_project, '專案'] = ren_p
@@ -597,11 +583,9 @@ with tab_settings:
                     st.session_state.mem_project = ren_p
                     st.success("改名成功"); time.sleep(1); st.rerun()
 
-    # 3. 標題與選單項目管理
     st.subheader("3. 標題與選單項目管理")
     st.caption(f"正在設定：**{global_project}**")
     
-    # A. 標題與區塊管理
     with st.expander("🔧 管理日報大標題 (修改名稱 / 新增管理項目)", expanded=False):
         st.markdown("##### 修改現有標題名稱")
         for i, config in enumerate(CAT_CONFIG_LIST):
@@ -629,7 +613,6 @@ with tab_settings:
 
     st.divider()
 
-    # B. 選單項目管理
     cat_options = [c["display"] for c in CAT_CONFIG_LIST]
     target_display = st.selectbox("選擇要管理項目的類別", cat_options)
     target_config = next((c for c in CAT_CONFIG_LIST if c["display"] == target_display), None)
@@ -682,7 +665,7 @@ with tab_settings:
                         final_name = new_name_input if new_name_input != item else item
                         if target_key not in price_data[global_project]: price_data[global_project][target_key] = {}
                         price_data[global_project][target_key][final_name] = {"price": new_p, "unit": new_u}
-                        settings_data["prices"] = price_data # 更新設定
+                        settings_data["prices"] = price_data 
                         save_settings_online(settings_data)
                     st.toast("更新成功"); time.sleep(0.5); st.rerun()
 
