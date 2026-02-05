@@ -28,6 +28,11 @@ TYPES_FILE = 'category_types.json'
 PRICES_FILE = 'item_prices.json'
 KEY_FILE = 'service_key.json'
 SHEET_NAME = 'construction_db'
+PHOTO_DIR = 'uploaded_photos'
+
+# 確保照片資料夾存在
+if not os.path.exists(PHOTO_DIR):
+    os.makedirs(PHOTO_DIR)
 
 # --- 台灣例假日 ---
 HOLIDAYS = {
@@ -212,6 +217,24 @@ def save_dataframe(df):
     except Exception as e:
         st.error(f"存檔錯誤: {e}")
 
+# 儲存照片到本地函式
+def save_image_local(uploaded_file, project, category):
+    if uploaded_file is not None:
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_ext = os.path.splitext(uploaded_file.name)[1]
+            safe_proj = "".join([c for c in project if c.isalnum() or c in (' ', '_')]).strip()
+            filename = f"{timestamp}_{safe_proj}_{category}{file_ext}"
+            file_path = os.path.join(PHOTO_DIR, filename)
+            
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            return filename
+        except Exception as e:
+            st.error(f"照片儲存失敗: {e}")
+            return None
+    return None
+
 def append_data(date, project, category, name, unit, qty, price, note):
     total = qty * price if category in COST_CATEGORIES else 0
     row = [str(date), project, category, name, unit, qty, price, total, note]
@@ -281,6 +304,10 @@ def create_zip_backup():
         for file in [SETTINGS_FILE, PRICES_FILE, TYPES_FILE]:
             if os.path.exists(file):
                 zip_file.write(file)
+        if os.path.exists(PHOTO_DIR):
+            for root, dirs, files in os.walk(PHOTO_DIR):
+                for file in files:
+                    zip_file.write(os.path.join(root, file))
     buffer.seek(0)
     return buffer
 
@@ -368,8 +395,9 @@ else:
                     with st.form(key=f"form_status_{d_key}"):
                         txt_item = st.selectbox("項目", current_items[real_cat], key=f"sel_status_{d_key}")
                         txt_content = st.text_area("內容", height=100, key=f"area_status_{d_key}")
+                        img_file = st.file_uploader("📸 上傳照片 (選填)", type=['jpg', 'jpeg', 'png'], key=f"img_status_{d_key}")
                         if st.form_submit_button("💾 儲存說明"):
-                            append_data(global_date, global_project, real_cat, txt_item, "式", 1, 0, txt_content)
+                            append_data(global_date, global_project, real_cat, txt_item, "式", 1, 0, txt_content, img_file)
                             st.toast("已儲存，同步中...")
                             time.sleep(1.5)
                             st.rerun()
@@ -380,8 +408,9 @@ else:
                     with st.form(key=f"form_records_{d_key}"):
                         txt_item = st.selectbox("項目", current_items[real_cat], key=f"sel_records_{d_key}")
                         txt_content = st.text_area("內容", height=100, key=f"area_records_{d_key}")
+                        img_file = st.file_uploader("📸 上傳照片 (選填)", type=['jpg', 'jpeg', 'png'], key=f"img_records_{d_key}")
                         if st.form_submit_button("💾 儲存紀錄"):
-                            append_data(global_date, global_project, real_cat, txt_item, "式", 1, 0, txt_content)
+                            append_data(global_date, global_project, real_cat, txt_item, "式", 1, 0, txt_content, img_file)
                             st.toast("已儲存，同步中...")
                             time.sleep(1.5)
                             st.rerun()
@@ -399,8 +428,9 @@ else:
                             with c_q: in_qty = st.number_input("數量", min_value=0.0, step=1.0, key=f"in_q_{i}_{d_key}")
                             with c_u: in_unit = st.text_input("單位", value="式", key=f"in_u_{i}_{d_key}")
                             in_note = st.text_input("備註", key=f"in_n_{i}_{d_key}")
+                            img_file = st.file_uploader("📸 上傳照片", type=['jpg', 'jpeg', 'png'], key=f"img_in_{i}_{d_key}")
                             if st.form_submit_button("💾 儲存進料"):
-                                append_data(global_date, global_project, real_cat, in_item, in_unit, in_qty, 0, in_note)
+                                append_data(global_date, global_project, real_cat, in_item, in_unit, in_qty, 0, in_note, img_file)
                                 st.toast("已儲存，同步中...")
                                 time.sleep(1.5)
                                 st.rerun()
@@ -432,14 +462,19 @@ else:
                     st.markdown("### 01. 工種 (人力)")
                     proj_prices = price_data.get(global_project, {}).get(cat, {})
                     cost_item = st.selectbox("項目", current_items[cat], key=f"sel_{cat}_{d_key}")
+                    
+                    # 取得預設值
                     item_setting = proj_prices.get(cost_item, {"price": 0, "unit": "工"})
-                    unique_key = f"{cat}_{d_key}_{cost_item}"
+                    
                     c_q, c_p = st.columns(2)
-                    with c_q: cost_qty = st.number_input("數量", min_value=0.0, step=0.5, value=1.0, key=f"qty_{unique_key}")
-                    with c_p: cost_price = st.number_input("單價 ($)", value=item_setting["price"], step=100, key=f"price_{unique_key}")
-                    cost_unit = st.text_input("單位", value=item_setting["unit"], key=f"unit_{unique_key}")
-                    cost_note = st.text_input("備註", key=f"note_{unique_key}")
-                    if st.button(f"💾 新增工種", type="primary", key=f"btn_{unique_key}"):
+                    with c_q: cost_qty = st.number_input("數量", min_value=0.0, step=0.5, value=1.0, key=f"qty_{cat}_{d_key}_{cost_item}")
+                    # 使用動態key來確保切換項目時更新數值
+                    with c_p: cost_price = st.number_input("單價 ($)", value=float(item_setting["price"]), step=100.0, key=f"price_{cat}_{d_key}_{cost_item}")
+                    
+                    cost_unit = st.text_input("單位", value=item_setting["unit"], key=f"unit_{cat}_{d_key}_{cost_item}")
+                    cost_note = st.text_input("備註", key=f"note_{cat}_{d_key}_{cost_item}")
+                    
+                    if st.button(f"💾 新增工種", type="primary", key=f"btn_{cat}"):
                         append_data(global_date, global_project, cat, cost_item, cost_unit, cost_qty, cost_price, cost_note)
                         st.toast("已儲存，同步中...")
                         time.sleep(1.5)
@@ -450,14 +485,17 @@ else:
                     st.markdown("### 02. 機具 (設備)")
                     proj_prices = price_data.get(global_project, {}).get(cat, {})
                     cost_item = st.selectbox("項目", current_items[cat], key=f"sel_{cat}_{d_key}")
+                    
+                    # 取得預設值
                     item_setting = proj_prices.get(cost_item, {"price": 0, "unit": "式"})
-                    unique_key = f"{cat}_{d_key}_{cost_item}"
+                    
                     c_q, c_p = st.columns(2)
-                    with c_q: cost_qty = st.number_input("數量", min_value=0.0, step=0.5, value=1.0, key=f"qty_{unique_key}")
-                    with c_p: cost_price = st.number_input("單價 ($)", value=item_setting["price"], step=100, key=f"price_{unique_key}")
-                    cost_unit = st.text_input("單位", value=item_setting["unit"], key=f"unit_{unique_key}")
-                    cost_note = st.text_input("備註", key=f"note_{unique_key}")
-                    if st.button(f"💾 新增機具", type="primary", key=f"btn_{unique_key}"):
+                    with c_q: cost_qty = st.number_input("數量", min_value=0.0, step=0.5, value=1.0, key=f"qty_{cat}_{d_key}_{cost_item}")
+                    with c_p: cost_price = st.number_input("單價 ($)", value=float(item_setting["price"]), step=100.0, key=f"price_{cat}_{d_key}_{cost_item}")
+                    cost_unit = st.text_input("單位", value=item_setting["unit"], key=f"unit_{cat}_{d_key}_{cost_item}")
+                    cost_note = st.text_input("備註", key=f"note_{cat}_{d_key}_{cost_item}")
+                    
+                    if st.button(f"💾 新增機具", type="primary", key=f"btn_{cat}"):
                         append_data(global_date, global_project, cat, cost_item, cost_unit, cost_qty, cost_price, cost_note)
                         st.toast("已儲存，同步中...")
                         time.sleep(1.5)
@@ -478,6 +516,16 @@ else:
             with c3: search = st.text_input("搜尋關鍵字", key="search_key")
             st.divider()
             
+            def extract_image_from_note(note_str):
+                if not note_str: return None
+                match = re.search(r'\(圖:(.*?)\)', str(note_str))
+                if match: return match.group(1).strip()
+                return None
+
+            def remove_image_tag(note_str):
+                if not note_str: return ""
+                return re.sub(r'\(圖:.*?\)', '', str(note_str)).strip()
+
             def render_section(display_title, cats, key, cost=False, qty=False):
                 sk = f"conf_{key}"
                 if sk not in st.session_state:
@@ -501,12 +549,26 @@ else:
                         if '刪除' not in view.columns:
                             view.insert(0, "刪除", False)
                             
+                        # 處理備註顯示 (隱藏檔名，增加打勾)
+                        def format_note_for_display(note):
+                            has_img = extract_image_from_note(note)
+                            clean_text = remove_image_tag(note)
+                            return f"✅ {clean_text}" if has_img else clean_text
+
+                        view['原始備註'] = view['備註'] # 備份原始備註
+                        view['備註'] = view['備註'].apply(format_note_for_display)
+                        
+                        if '📸看圖' not in view.columns:
+                            view.insert(1, "📸看圖", False)
+                            
                         col_cfg = {
                             "刪除": st.column_config.CheckboxColumn(width="small"),
+                            "📸看圖": st.column_config.CheckboxColumn(width="small", help="勾選以管理或查看照片"),
+                            "原始備註": st.column_config.Column(hidden=True),
                             "日期": st.column_config.DateColumn(format="YYYY-MM-DD", width="small"),
                             "🗓️ 星期/節日": st.column_config.TextColumn(disabled=True, width="medium"),
                             "名稱": st.column_config.TextColumn(width="medium"),
-                            "備註": st.column_config.TextColumn(width="large"),
+                            "備註": st.column_config.TextColumn(width="large", label="備註 (✅=有圖)"),
                             "月份": None, "類別": None, "專案": None
                         }
                         if cost:
@@ -533,10 +595,87 @@ else:
                             hide_index=True
                         )
                         
+                        # [照片管理面板]
+                        if not edited.empty and edited["📸看圖"].any():
+                            st.markdown("---")
+                            st.markdown("#### 📸 照片管理面板")
+                            selected_rows = edited[edited["📸看圖"]]
+                            
+                            for index, row in selected_rows.iterrows():
+                                # 使用原始備註來找圖
+                                original_note = row['原始備註']
+                                img_filename = extract_image_from_note(original_note)
+                                row_name = row['名稱']
+                                
+                                col_show, col_manage = st.columns([1, 1])
+                                
+                                with col_show:
+                                    if img_filename:
+                                        img_path = os.path.join(PHOTO_DIR, img_filename)
+                                        if os.path.exists(img_path):
+                                            st.success(f"🖼️ 目前照片：{img_filename}")
+                                            try:
+                                                image = Image.open(img_path)
+                                                st.image(image, width=400)
+                                            except:
+                                                st.error("照片檔案毀損")
+                                        else:
+                                            st.warning(f"⚠️ 找不到照片檔案：{img_filename}")
+                                    else:
+                                        st.info("ℹ️ 此項目目前【沒有照片】")
+
+                                with col_manage:
+                                    st.write(f"🔧 **管理操作 ({row_name})**")
+                                    if img_filename:
+                                        if st.button("🗑️ 刪除此照片", key=f"del_img_{index}"):
+                                            if img_path and os.path.exists(img_path):
+                                                try: os.remove(img_path)
+                                                except: pass
+                                            # 更新資料庫：移除標籤
+                                            clean_note = remove_image_tag(original_note)
+                                            
+                                            mask = (df['專案'] == global_project) & (df['備註'] == original_note)
+                                            if mask.any():
+                                                idx_to_update = df[mask].index[0] # 只更新第一筆匹配的
+                                                df.at[idx_to_update, '備註'] = clean_note
+                                                save_dataframe(df)
+                                                st.success("照片已刪除！")
+                                                time.sleep(0.5); st.rerun()
+                                    
+                                    new_img = st.file_uploader(f"{'📤 上傳新照片' if not img_filename else '🔄 更換照片'}", type=['jpg', 'jpeg', 'png'], key=f"new_img_{index}")
+                                    if new_img and st.button("💾 儲存照片", key=f"save_img_{index}"):
+                                        if img_filename:
+                                            old_path = os.path.join(PHOTO_DIR, img_filename)
+                                            if os.path.exists(old_path):
+                                                try: os.remove(old_path)
+                                                except: pass
+                                        
+                                        saved_filename = save_image_local(new_img, global_project, row['類別'])
+                                        clean_note = remove_image_tag(original_note)
+                                        new_note_str = f"{clean_note} (圖:{saved_filename})" if clean_note else f"(圖:{saved_filename})"
+                                        
+                                        mask = (df['專案'] == global_project) & (df['備註'] == original_note)
+                                        if mask.any():
+                                            idx_to_update = df[mask].index[0]
+                                            df.at[idx_to_update, '備註'] = new_note_str
+                                            save_dataframe(df)
+                                            st.success("照片已更新！")
+                                            time.sleep(0.5); st.rerun()
+                            st.markdown("---")
+                        
                         b1, b2, _ = st.columns([1, 1, 6])
                         with b1: 
                             if st.button("💾 更新修改", key=f"s_{key}"): 
-                                vis = edited.drop(columns=['刪除'])
+                                # 還原備註 (把顯示用的文字轉回儲存用的文字)
+                                for idx, row in edited.iterrows():
+                                    user_text = str(row['備註']).replace("✅", "").strip()
+                                    orig_note = str(row['原始備註'])
+                                    img_tag = extract_image_from_note(orig_note)
+                                    
+                                    final_note = f"{user_text} (圖:{img_tag})" if img_tag else user_text
+                                    edited.at[idx, '備註'] = final_note
+                                
+                                vis = edited.drop(columns=['刪除', '📸看圖', '原始備註'])
                                 merged = pd.concat([hidden, vis], ignore_index=True)
                                 final = update_by_scope(df, merged, global_project, ed_month, cats)
                                 save_dataframe(final)
@@ -553,7 +692,15 @@ else:
                             cy, cn = st.columns([1, 5])
                             with cy:
                                 if st.button("✔️ 是", key=f"y_{key}", type="primary"): 
-                                    vis = edited[~edited['刪除']].drop(columns=['刪除'])
+                                    # 刪除前也要還原備註
+                                    for idx, row in edited.iterrows():
+                                        user_text = str(row['備註']).replace("✅", "").strip()
+                                        orig_note = str(row['原始備註'])
+                                        img_tag = extract_image_from_note(orig_note)
+                                        final_note = f"{user_text} (圖:{img_tag})" if img_tag else user_text
+                                        edited.at[idx, '備註'] = final_note
+
+                                    vis = edited[~edited['刪除']].drop(columns=['刪除', '📸看圖', '原始備註'])
                                     merged = pd.concat([hidden, vis], ignore_index=True)
                                     final = update_by_scope(df, merged, global_project, ed_month, cats)
                                     save_dataframe(final)
@@ -756,18 +903,17 @@ else:
                                     save_settings(settings_data)
                                     st.rerun()
                                     
+                        # [恢復功能] 顯示並可編輯單價/單位
                         if cat in COST_CATEGORIES:
                             st.caption("💰 預設單價與單位")
                             for item_name in curr_list:
                                 item_data = price_data[global_project][cat].get(item_name, {"price": 0, "unit": "工" if "工種" in cat else "式"})
                                 c_p, c_u, c_b = st.columns([2, 1, 1])
                                 with c_p:
-                                    new_p = st.number_input(f"{item_name} 單價", value=item_data["price"], step=100, key=f"p_{cat}_{item_name}")
+                                    new_p = st.number_input(f"{item_name} 單價", value=float(item_data["price"]), step=100.0, key=f"p_{cat}_{item_name}", label_visibility="collapsed")
                                 with c_u:
-                                    new_u = st.text_input(f"單位", value=item_data["unit"], key=f"u_{cat}_{item_name}")
+                                    new_u = st.text_input(f"單位", value=item_data["unit"], key=f"u_{cat}_{item_name}", label_visibility="collapsed")
                                 with c_b: 
-                                    st.write("")
-                                    st.write("")
                                     if st.button("✅", key=f"set_{cat}_{item_name}"):
                                         price_data[global_project][cat][item_name] = {"price": new_p, "unit": new_u}
                                         save_prices(price_data)
