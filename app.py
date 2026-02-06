@@ -20,7 +20,7 @@ st.set_page_config(page_title="多專案施工管理系統 PRO Max (線上版)",
 # --- 🔐 安全設定 ---
 SYSTEM_PASSWORD = "12345" 
 
-# --- 檔案路徑 (本地設定檔) ---
+# --- 檔案路徑 ---
 SETTINGS_FILE = 'settings.json'
 PRICES_FILE = 'item_prices.json'
 KEY_FILE = 'service_key.json'      # Google API 金鑰
@@ -140,7 +140,7 @@ def load_data():
 def save_dataframe(df):
     sheet = get_google_sheet()
     if not sheet: return
-    df_save = df.copy().fillna('') # 解決 nan 導致的 JSON 錯誤
+    df_save = df.copy().fillna('') 
     df_save = df_save.drop(columns=[c for c in ['月份', '刪除', 'temp_month', '星期/節日', '🗓️ 星期/節日'] if c in df_save.columns])
     df_save['日期'] = df_save['日期'].astype(str)
     try:
@@ -158,7 +158,13 @@ def update_by_scope(original_df, edited_part, proj, month, cat_key):
     mask = (original_df['temp_month'] == month) & (original_df['專案'] == proj) & (original_df['類別'] == cat_key)
     df_kept = original_df[~mask].copy()
     edited_clean = edited_part.drop(columns=[c for c in ['刪除', '星期/節日', '🗓️ 星期/節日'] if c in edited_part.columns])
+    
+    # 確保必要欄位存在，避免因欄位隱藏導致的 KeyError
+    for col in ['數量', '單價']:
+        if col not in edited_clean.columns: edited_clean[col] = 0
+    
     for col in ['數量', '單價']: edited_clean[col] = pd.to_numeric(edited_clean[col], errors='coerce').fillna(0)
+    
     cat_type = next((c['type'] for c in CAT_CONFIG_LIST if c['key'] == cat_key), 'text')
     edited_clean['總價'] = edited_clean.apply(lambda r: r['數量']*r['單價'] if cat_type == 'cost' else 0, axis=1)
     return pd.concat([df_kept, edited_clean], ignore_index=True)
@@ -205,7 +211,6 @@ settings_data = load_settings(); price_data = load_prices(); df = load_data()
 CAT_CONFIG_LIST = settings_data["cat_config"]
 if 'mem_project' not in st.session_state: st.session_state.mem_project = settings_data["projects"][0]
 if 'mem_date' not in st.session_state: st.session_state.mem_date = datetime.now()
-if 'last_check_date' not in st.session_state: st.session_state.last_check_date = st.session_state.mem_date
 
 # ==========================================
 # 主介面
@@ -230,7 +235,7 @@ with st.sidebar:
 
 tab_entry, tab_data, tab_dash, tab_settings = st.tabs(["📝 快速日報輸入", "🛠️ 報表總覽與編輯修正", "📊 成本儀表板", "🏗️ 專案管理區"])
 
-# === Tab 1: 快速日報輸入 (維持原狀) ===
+# === Tab 1: 快速日報輸入 ===
 with tab_entry:
     st.info(f"正在填寫：**{global_project}** / **{global_date}**")
     d_key = str(global_date); handled_keys = []
@@ -304,12 +309,11 @@ with tab_entry:
                             c1, c2, c3 = st.columns(3)
                             q = c1.number_input("數量", value=1.0, key=f"dq_{conf['key']}")
                             p = c2.number_input("單價", value=float(p_set["price"]), key=f"dp_{conf['key']}_{it}") if conf["type"] == 'cost' else 0
-                            u = c3.text_input("單位", value=p_set["unit"], key=f"du_{conf['key']}_{it}")
-                            tx = ""
+                            u = c3.text_input("單位", value=p_set["unit"], key=f"du_{conf['key']}_{it}"); tx = ""
                         if st.form_submit_button("💾 儲存資料"):
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, p, tx); st.rerun()
 
-# === Tab 2: 報表總覽 (修正更新後消失的 Bug) ===
+# === Tab 2: 報表總覽 (修復資料更新後消失的問題) ===
 with tab_data:
     proj_df = df[df['專案'] == global_project].copy()
     if proj_df.empty: st.info(f"專案【{global_project}】無資料")
@@ -326,7 +330,6 @@ with tab_data:
         def render_section(cat_key, cat_disp, cat_type, key):
             sk = f"conf_{key}"; 
             if sk not in st.session_state: st.session_state[sk] = False
-            # 取得該範圍內的所有資料
             sec_df = month_df[month_df['類別'] == cat_key].copy()
             if not sec_df.empty:
                 st.subheader(cat_disp)
@@ -365,20 +368,19 @@ with tab_data:
                     b1, b2, _ = st.columns([1, 1, 6])
                     with b1: 
                         if st.button("💾 更新修改", key=f"s_{key}"): 
-                            # --- 核心修復邏輯：Scoped Update ---
-                            # 1. 找出目前全域 df 中，不屬於此專案/月份/類別的資料
-                            global_mask = (df['專案'] == global_project) & (df['月份'] == ed_month) & (df['類別'] == cat_key)
-                            df_kept = df[~global_mask].copy()
-                            # 2. 處理編輯後的資料（移除 UI 專用欄位）
+                            # 1. 找出被篩選掉(隱藏)的資料，確保不被覆蓋
+                            hidden_rows = sec_df[~sec_df.index.isin(view.index)]
+                            
+                            # 2. 清理編輯後的資料
                             edited_clean = edited.drop(columns=['刪除', '🗓️ 星期/節日'], errors='ignore')
-                            if cat_type == 'cost':
-                                edited_clean['總價'] = edited_clean['數量'] * edited_clean['單價']
-                            else:
-                                edited_clean['總價'] = 0
-                            # 3. 合併並存檔
-                            df_final = pd.concat([df_kept, edited_clean], ignore_index=True)
-                            save_dataframe(df_final)
-                            st.toast("✅ 已更新"); time.sleep(0.5); st.rerun()
+                            
+                            # 3. 合併：隱藏資料 + 編輯後的資料 = 該類別當月完整資料
+                            merged = pd.concat([hidden_rows, edited_clean], ignore_index=True)
+                            
+                            # 4. 執行全域更新
+                            final_df = update_by_scope(df, merged, global_project, ed_month, cat_key)
+                            save_dataframe(final_df)
+                            st.toast("✅ 更新成功"); time.sleep(0.5); st.rerun()
 
                     with b2: 
                         if st.button("🗑️ 刪除選取", key=f"d_{key}", type="primary"): 
@@ -388,11 +390,11 @@ with tab_data:
                         cy, cn = st.columns(2)
                         with cy:
                             if st.button("✔️ 是", key=f"y_{key}"):
-                                global_mask = (df['專案'] == global_project) & (df['月份'] == ed_month) & (df['類別'] == cat_key)
-                                df_kept = df[~global_mask].copy()
+                                hidden_rows = sec_df[~sec_df.index.isin(view.index)]
                                 edited_not_deleted = edited[~edited['刪除']].drop(columns=['刪除', '🗓️ 星期/節日'], errors='ignore')
-                                df_final = pd.concat([df_kept, edited_not_deleted], ignore_index=True)
-                                save_dataframe(df_final)
+                                merged = pd.concat([hidden_rows, edited_not_deleted], ignore_index=True)
+                                final_df = update_by_scope(df, merged, global_project, ed_month, cat_key)
+                                save_dataframe(final_df)
                                 st.session_state[sk] = False; st.rerun()
                         with cn:
                             if st.button("❌ 否", key=f"n_{key}"): st.session_state[sk] = False; st.rerun()
@@ -400,9 +402,10 @@ with tab_data:
         for config in CAT_CONFIG_LIST:
             render_section(config["key"], config["display"], config["type"], f"sec_{config['key']}")
 
-# === Tab 3 & 4: (維持原狀) ===
+# === Tab 3: 成本儀表板 ===
 with tab_dash:
-    if not df.empty:
+    if df.empty: st.info("無資料")
+    else:
         dash_df = df[df['專案'] == global_project].copy()
         if not dash_df.empty:
             dash_df['Year'] = pd.to_datetime(dash_df['日期']).dt.year
@@ -427,10 +430,11 @@ with tab_dash:
                         st.bar_chart(c_data.groupby('名稱')['總價'].sum().reset_index().sort_values('總價', ascending=False), x='名稱', y='總價')
             else: st.info(f"{sel_m} 尚無金額紀錄。")
 
+# === Tab 4: 🏗️ 專案管理區 ===
 with tab_settings:
     st.header("🏗️ 專案管理區")
     with st.expander("📦 資料備份中心", expanded=False):
-        st.download_button("📦 下載完整備份 (ZIP)", create_zip_backup(), file_name=f"full_backup_{datetime.now().strftime('%Y%m%d')}.zip", mime="application/zip")
+        st.download_button("📦 下載完整備份 (ZIP)", create_zip_backup(), file_name=f"backup_{datetime.now().strftime('%Y%m%d')}.zip", mime="application/zip")
         uploaded_file = st.file_uploader("📤 系統還原 (ZIP/CSV/JSON)", type=['csv', 'zip', 'json'])
         if uploaded_file and st.button("⚠️ 確認執行還原"):
             try:
