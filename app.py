@@ -225,7 +225,7 @@ with st.sidebar:
 
 tab_entry, tab_data, tab_dash, tab_settings = st.tabs(["📝 快速日報輸入", "🛠️ 報表總覽與編輯修正", "📊 成本儀表板", "🏗️ 專案管理區"])
 
-# === Tab 1: 快速日報輸入 (動態同步完全修復) ===
+# === Tab 1: 快速日報輸入 (動態同步) ===
 with tab_entry:
     st.info(f"正在填寫：**{global_project}** / **{global_date}**")
     d_key = str(global_date); handled_keys = []
@@ -314,7 +314,7 @@ with tab_entry:
                         if st.form_submit_button("💾 儲存資料"):
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, p, tx); st.rerun()
 
-# === Tab 2 & 3: 報表與儀表板 (維持原樣) ===
+# === Tab 2 & 3: 報表與儀表板 ===
 with tab_data:
     proj_df = df[df['專案'] == global_project].copy()
     if not proj_df.empty:
@@ -343,7 +343,7 @@ with tab_dash:
 with tab_settings:
     st.header("🏗️ 專案管理區")
     with st.expander("📦 資料備份中心", expanded=False):
-        st.download_button("📦 下載完整備份 (ZIP)", create_zip_backup(), file_name=f"full_backup_{datetime.now().date()}.zip")
+        st.download_button("📦 下載完整備份 (ZIP)", create_zip_backup(), file_name=f"backup_{datetime.now().date()}.zip")
         up = st.file_uploader("📤 系統還原 (ZIP/CSV)", type=['csv', 'zip'])
         if up and st.button("⚠️ 確認還原"):
             df_new = pd.read_csv(up); save_dataframe(df_new); st.success("還原成功"); st.rerun()
@@ -359,7 +359,7 @@ with tab_settings:
                 settings_data["projects"][settings_data["projects"].index(global_project)] = rp
                 settings_data["items"][rp] = settings_data["items"].pop(global_project); save_settings(settings_data); st.rerun()
         with c3:
-            if len(proj_list) > 1 and st.button("🗑️ 刪除目前專案", type="primary"):
+            if len(proj_list) > 1 and st.button("🗑️ 刪除專案", type="primary"):
                 settings_data["projects"].remove(global_project); save_settings(settings_data); st.rerun()
     st.divider(); st.subheader("📋 選單項目管理")
     with st.expander("1. 從其他專案匯入選單範本", expanded=False):
@@ -392,6 +392,7 @@ with tab_settings:
             nd = c2.text_input(f"新標題 {i}", value=conf['display'], label_visibility="collapsed")
             if nd != conf['display'] and st.button("更新", key=f"u_{i}"): update_category_config(i, nd, settings_data); st.rerun()
             if c4.button("🗑️", key=f"d_{i}"): delete_category_block(i, settings_data); st.rerun()
+        
         st.markdown("---"); st.markdown("##### 管理項目細項內容")
         target = st.selectbox("選擇類別", [c["display"] for c in CAT_CONFIG_LIST])
         t_conf = next((c for c in CAT_CONFIG_LIST if c["display"] == target), None)
@@ -401,19 +402,30 @@ with tab_settings:
             ni = c1.text_input(f"在【{target}】新增內容", key=f"add_{tk}")
             if c2.button("➕ 加入", key=f"btn_{tk}") and ni: 
                 current_items[tk].append(ni); save_settings(settings_data); st.rerun()
+            
+            # 🌟 核心修改：項目管理清單 (增加單位與單價說明)
+            st.markdown(f"**目前項目清單 ({len(c_list)})**")
+            # 建立表頭
+            h1, h2, h3, h4, h5, h6 = st.columns([2, 2, 1, 1, 0.5, 0.5])
+            h1.caption("原名稱"); h2.caption("新名稱(改名)"); h3.caption("預設單價"); h4.caption("預設單位"); h5.caption("存"); h6.caption("刪")
+            
             for it in c_list:
-                cols = st.columns([2, 2, 1, 1, 1, 1]) if ct == 'cost' else st.columns([3, 3, 1, 1])
-                cols[0].text(it); rnn = cols[1].text_input("RN", value=it, key=f"r_{tk}_{it}", label_visibility="collapsed")
-                if ct == 'cost':
-                    p_i = price_data.get(global_project, {}).get(tk, {}).get(it, {"price": 0, "unit": "工"})
-                    np = cols[2].number_input("P", value=float(p_i["price"]), key=f"p_{tk}_{it}", label_visibility="collapsed")
-                    nu = cols[2].text_input("U", value=p_i["unit"], key=f"u_{tk}_{it}", label_visibility="collapsed")
-                    s_i, d_i = 4, 5
-                else: s_i, d_i = 2, 3
-                if cols[s_i].button("💾", key=f"s_{tk}_{it}"):
-                    if rnn != it: update_item_name(global_project, tk, it, rnn, settings_data, price_data)
-                    if ct == 'cost':
+                r1, r2, r3, r4, r5, r6 = st.columns([2, 2, 1, 1, 0.5, 0.5])
+                with r1: st.text(it)
+                with r2: rnn = r2.text_input("RN", value=it, key=f"r_{tk}_{it}", label_visibility="collapsed")
+                
+                # 讀取預設值
+                p_i = price_data.get(global_project, {}).get(tk, {}).get(it, {"price": 0, "unit": "式"})
+                with r3: np = r3.number_input("P", value=float(p_i["price"]), key=f"p_{tk}_{it}", label_visibility="collapsed")
+                with r4: nu = r4.text_input("U", value=p_i["unit"], key=f"u_{tk}_{it}", label_visibility="collapsed")
+                
+                with r5:
+                    if st.button("💾", key=f"s_{tk}_{it}"):
+                        if rnn != it: update_item_name(global_project, tk, it, rnn, settings_data, price_data)
+                        # 無論類別，統一儲存預設單價與單位到 JSON
                         if tk not in price_data[global_project]: price_data[global_project][tk] = {}
-                        price_data[global_project][tk][rnn if rnn != it else it] = {"price": np, "unit": nu}; save_prices(price_data)
-                    st.toast("已儲存"); time.sleep(0.5); st.rerun()
-                if cols[d_i].button("🗑️", key=f"x_{tk}_{it}"): current_items[tk].remove(it); save_settings(settings_data); st.rerun()
+                        price_data[global_project][tk][rnn if rnn != it else it] = {"price": np, "unit": nu}
+                        save_prices(price_data)
+                        st.toast("已儲存設定"); time.sleep(0.5); st.rerun()
+                with r6:
+                    if st.button("🗑️", key=f"dl_{tk}_{it}"): current_items[tk].remove(it); save_settings(settings_data); st.rerun()
