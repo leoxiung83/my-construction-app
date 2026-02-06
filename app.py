@@ -40,7 +40,7 @@ HOLIDAYS = {
 DEFAULT_CAT_CONFIG = [
     {"key": "施工說明", "display": "01. 施工說明", "type": "text"},
     {"key": "相關紀錄", "display": "02. 相關紀錄", "type": "text"},
-    {"key": "進料管理", "display": "03. 進料管理", "type": "text"}, # 預設改為 text，可依需求改 usage
+    {"key": "進料管理", "display": "03. 進料管理", "type": "text"},
     {"key": "用料管理", "display": "04. 用料管理", "type": "usage"},
     {"key": "工種 (人力)", "display": "05. 工種 (人力)", "type": "cost"},
     {"key": "機具 (設備)", "display": "06. 機具 (設備)", "type": "cost"}
@@ -136,8 +136,15 @@ def load_data():
         # 補齊欄位
         for c in cols: 
             if c not in df.columns: df[c] = ""
-            
+        
+        # 補強: 確保字串欄位為字串，避免 None/NaN
+        for col in ['專案', '類別', '名稱', '單位', '備註']:
+            df[col] = df[col].fillna("").astype(str)
+
+        # 關鍵修正: 轉換日期並移除無效日期 (NaN/NaT)，這解決了 Streamlit DateColumn 崩潰問題
         df['日期'] = pd.to_datetime(df['日期'], errors='coerce').dt.date
+        df = df.dropna(subset=['日期']) 
+
         df['月份'] = pd.to_datetime(df['日期']).dt.strftime("%Y-%m")
         for col in ['總價', '數量', '單價']: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
