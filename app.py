@@ -153,22 +153,7 @@ def append_data(date, project, category, category_type, name, unit, qty, price, 
     sheet = get_google_sheet()
     if sheet: sheet.append_row(row)
 
-def update_by_scope(original_df, edited_part, proj, month, cat_key):
-    original_df['temp_month'] = pd.to_datetime(original_df['日期']).dt.strftime("%Y-%m")
-    mask = (original_df['temp_month'] == month) & (original_df['專案'] == proj) & (original_df['類別'] == cat_key)
-    df_kept = original_df[~mask].copy()
-    edited_clean = edited_part.drop(columns=[c for c in ['刪除', '星期/節日', '🗓️ 星期/節日'] if c in edited_part.columns])
-    
-    # 確保必要欄位存在，避免因欄位隱藏導致的 KeyError
-    for col in ['數量', '單價']:
-        if col not in edited_clean.columns: edited_clean[col] = 0
-    
-    for col in ['數量', '單價']: edited_clean[col] = pd.to_numeric(edited_clean[col], errors='coerce').fillna(0)
-    
-    cat_type = next((c['type'] for c in CAT_CONFIG_LIST if c['key'] == cat_key), 'text')
-    edited_clean['總價'] = edited_clean.apply(lambda r: r['數量']*r['單價'] if cat_type == 'cost' else 0, axis=1)
-    return pd.concat([df_kept, edited_clean], ignore_index=True)
-
+# 修正：直接使用 Index 更新的邏輯，取代 update_by_scope
 def update_item_name(project, category, old_name, new_name, settings, prices):
     if old_name == new_name: return False
     curr_list = settings["items"][project].get(category, [])
@@ -211,6 +196,7 @@ settings_data = load_settings(); price_data = load_prices(); df = load_data()
 CAT_CONFIG_LIST = settings_data["cat_config"]
 if 'mem_project' not in st.session_state: st.session_state.mem_project = settings_data["projects"][0]
 if 'mem_date' not in st.session_state: st.session_state.mem_date = datetime.now()
+if 'last_check_date' not in st.session_state: st.session_state.last_check_date = st.session_state.mem_date
 
 # ==========================================
 # 主介面
@@ -313,7 +299,7 @@ with tab_entry:
                         if st.form_submit_button("💾 儲存資料"):
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, p, tx); st.rerun()
 
-# === Tab 2: 報表總覽 (修復資料更新後消失的問題) ===
+# === Tab 2: 報表總覽 (修正：直接索引更新法) ===
 with tab_data:
     proj_df = df[df['專案'] == global_project].copy()
     if proj_df.empty: st.info(f"專案【{global_project}】無資料")
@@ -368,18 +354,26 @@ with tab_data:
                     b1, b2, _ = st.columns([1, 1, 6])
                     with b1: 
                         if st.button("💾 更新修改", key=f"s_{key}"): 
-                            # 1. 找出被篩選掉(隱藏)的資料，確保不被覆蓋
-                            hidden_rows = sec_df[~sec_df.index.isin(view.index)]
+                            # 1. 取得編輯後的資料，並確保數值欄位正確
+                            target_indices = edited.index
+                            # 找出共用欄位進行更新
+                            common_cols = [c for c in edited.columns if c in df.columns and c not in ['刪除', '🗓️ 星期/節日']]
                             
-                            # 2. 清理編輯後的資料
-                            edited_clean = edited.drop(columns=['刪除', '🗓️ 星期/節日'], errors='ignore')
+                            # 2. 直接更新全域 DF (df) 中的對應列
+                            for col in common_cols:
+                                df.loc[target_indices, col] = edited[col]
                             
-                            # 3. 合併：隱藏資料 + 編輯後的資料 = 該類別當月完整資料
-                            merged = pd.concat([hidden_rows, edited_clean], ignore_index=True)
+                            # 3. 若為成本類別，重算總價
+                            if cat_type == 'cost':
+                                df.loc[target_indices, '總價'] = df.loc[target_indices, '數量'] * df.loc[target_indices, '單價']
                             
-                            # 4. 執行全域更新
-                            final_df = update_by_scope(df, merged, global_project, ed_month, cat_key)
-                            save_dataframe(final_df)
+                            # 4. 處理刪除
+                            if '刪除' in edited.columns:
+                                delete_indices = edited[edited['刪除']].index
+                                if not delete_indices.empty:
+                                    df.drop(delete_indices, inplace=True)
+                            
+                            save_dataframe(df)
                             st.toast("✅ 更新成功"); time.sleep(0.5); st.rerun()
 
                     with b2: 
@@ -390,11 +384,9 @@ with tab_data:
                         cy, cn = st.columns(2)
                         with cy:
                             if st.button("✔️ 是", key=f"y_{key}"):
-                                hidden_rows = sec_df[~sec_df.index.isin(view.index)]
-                                edited_not_deleted = edited[~edited['刪除']].drop(columns=['刪除', '🗓️ 星期/節日'], errors='ignore')
-                                merged = pd.concat([hidden_rows, edited_not_deleted], ignore_index=True)
-                                final_df = update_by_scope(df, merged, global_project, ed_month, cat_key)
-                                save_dataframe(final_df)
+                                delete_indices = edited[edited['刪除']].index
+                                df.drop(delete_indices, inplace=True)
+                                save_dataframe(df)
                                 st.session_state[sk] = False; st.rerun()
                         with cn:
                             if st.button("❌ 否", key=f"n_{key}"): st.session_state[sk] = False; st.rerun()
@@ -402,10 +394,9 @@ with tab_data:
         for config in CAT_CONFIG_LIST:
             render_section(config["key"], config["display"], config["type"], f"sec_{config['key']}")
 
-# === Tab 3: 成本儀表板 ===
+# === Tab 3 & 4: (維持原狀) ===
 with tab_dash:
-    if df.empty: st.info("無資料")
-    else:
+    if not df.empty:
         dash_df = df[df['專案'] == global_project].copy()
         if not dash_df.empty:
             dash_df['Year'] = pd.to_datetime(dash_df['日期']).dt.year
@@ -430,7 +421,6 @@ with tab_dash:
                         st.bar_chart(c_data.groupby('名稱')['總價'].sum().reset_index().sort_values('總價', ascending=False), x='名稱', y='總價')
             else: st.info(f"{sel_m} 尚無金額紀錄。")
 
-# === Tab 4: 🏗️ 專案管理區 ===
 with tab_settings:
     st.header("🏗️ 專案管理區")
     with st.expander("📦 資料備份中心", expanded=False):
