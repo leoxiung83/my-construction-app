@@ -230,12 +230,10 @@ with st.sidebar:
 
 tab_entry, tab_data, tab_dash, tab_settings = st.tabs(["📝 快速日報輸入", "🛠️ 報表總覽與編輯修正", "📊 成本儀表板", "🏗️ 專案管理區"])
 
-# === Tab 1: 快速日報輸入 (修正預設值連動問題) ===
+# === Tab 1: 快速日報輸入 (維持原狀) ===
 with tab_entry:
     st.info(f"正在填寫：**{global_project}** / **{global_date}**")
     d_key = str(global_date); handled_keys = []
-
-    # 1. 施工說明 & 相關紀錄
     if len(CAT_CONFIG_LIST) >= 2:
         with st.expander(f"📝 {CAT_CONFIG_LIST[0]['display']} 及 {CAT_CONFIG_LIST[1]['display']}", expanded=True):
             cols = st.columns(2)
@@ -250,8 +248,6 @@ with tab_entry:
                         tx = st.text_area("內容", height=100, key=f"a_{i}_{d_key}")
                         if st.form_submit_button("💾 儲存") and opts:
                             append_data(global_date, global_project, conf["key"], conf["type"], it, p_set["unit"], 1, 0, tx); st.toast("儲存成功")
-
-    # 2. 進料管理
     if len(CAT_CONFIG_LIST) >= 3:
         conf = CAT_CONFIG_LIST[2]; handled_keys.append(conf["key"])
         with st.expander(f"🚛 {conf['display']}", expanded=True):
@@ -259,16 +255,12 @@ with tab_entry:
             for k in range(3):
                 with cols[k]:
                     it = st.selectbox("材料", opts if opts else ["(請先新增項目)"], key=f"is_{k}_{d_key}")
-                    # 動態抓取預設值
                     p_set = price_data.get(global_project, {}).get(conf["key"], {}).get(it, {"price": 0, "unit": "式"})
                     with st.form(key=f"f_2_{k}_{d_key}"):
                         q = st.number_input("數量", min_value=0.0, step=1.0, key=f"iq_{k}_{d_key}")
-                        # 使用動態 key (加上 it) 強制重新載入 value
                         u = st.text_input("單位", value=p_set["unit"], key=f"iu_{k}_{d_key}_{it}")
                         if st.form_submit_button(f"💾 儲存 {k+1}") and opts:
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, 0, ""); st.rerun()
-
-    # 3. 用料管理
     if len(CAT_CONFIG_LIST) >= 4:
         conf = CAT_CONFIG_LIST[3]; handled_keys.append(conf["key"])
         with st.expander(f"🧱 {conf['display']}", expanded=True):
@@ -276,16 +268,12 @@ with tab_entry:
             for k in range(3):
                 with cols[k]:
                     it = st.selectbox("材料", opts if opts else ["(請先新增項目)"], key=f"us_{k}_{d_key}")
-                    # 動態抓取預設值
                     p_set = price_data.get(global_project, {}).get(conf["key"], {}).get(it, {"price": 0, "unit": "m3"})
                     with st.form(key=f"f_3_{k}_{d_key}"):
                         q = st.number_input("數量", min_value=0.0, step=0.5, key=f"uq_{k}_{d_key}")
-                        # 使用動態 key (加上 it) 強制重新載入 value
                         u = st.text_input("單位", value=p_set["unit"], key=f"uu_{k}_{d_key}_{it}")
                         if st.form_submit_button(f"💾 儲存 {k+1}") and opts:
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, 0, ""); st.rerun()
-
-    # 4. 人力與機具
     if len(CAT_CONFIG_LIST) >= 6:
         with st.expander("👷 人力與機具出工紀錄", expanded=True):
             cols = st.columns(2)
@@ -295,18 +283,14 @@ with tab_entry:
                     st.markdown(f"### {conf['display']}")
                     opts = current_items.get(conf["key"], [])
                     it = st.selectbox("項目", opts if opts else ["(請先新增項目)"], key=f"cs_{i}_{d_key}")
-                    # 動態抓取預設值
                     p_set = price_data.get(global_project, {}).get(conf["key"], {}).get(it, {"price": 0, "unit": "工" if i==4 else "式"})
                     with st.form(key=f"f_{i}_{d_key}"):
                         cq, cp = st.columns(2)
                         q = cq.number_input("數量", value=1.0, step=0.5, key=f"cq_{i}_{d_key}")
-                        # 使用動態 key 強制重新載入單價與單位
                         p = cp.number_input("單價", value=float(p_set["price"]), key=f"cp_{i}_{d_key}_{it}")
                         u = st.text_input("單位", value=p_set["unit"], key=f"cu_{i}_{d_key}_{it}")
                         if st.form_submit_button("💾 新增紀錄") and opts:
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, p, ""); st.rerun()
-
-    # 🌟 動態同步區
     for conf in CAT_CONFIG_LIST:
         if conf["key"] not in handled_keys:
             with st.expander(f"📌 {conf['display']}", expanded=True):
@@ -315,23 +299,21 @@ with tab_entry:
                     it = st.selectbox("選擇項目", opts, key=f"ds_{conf['key']}")
                     p_set = price_data.get(global_project, {}).get(conf["key"], {}).get(it, {"price": 0, "unit": "式"})
                     with st.form(key=f"dyn_{conf['key']}_{d_key}"):
-                        if conf["type"] == 'text':
-                            tx = st.text_area("內容內容", key=f"dt_{conf['key']}")
-                            q, p, u = 1, 0, p_set["unit"]
+                        if conf["type"] == 'text': tx = st.text_area("內容內容", key=f"dt_{conf['key']}"); q, p, u = 1, 0, p_set["unit"]
                         else:
                             c1, c2, c3 = st.columns(3)
                             q = c1.number_input("數量", value=1.0, key=f"dq_{conf['key']}")
-                            # 動態 key 同步
                             p = c2.number_input("單價", value=float(p_set["price"]), key=f"dp_{conf['key']}_{it}") if conf["type"] == 'cost' else 0
                             u = c3.text_input("單位", value=p_set["unit"], key=f"du_{conf['key']}_{it}")
                             tx = ""
                         if st.form_submit_button("💾 儲存資料"):
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, p, tx); st.rerun()
 
-# === Tab 2 & 3: (完全不變動) ===
+# === Tab 2: 報表總覽 (修正更新後消失的 Bug) ===
 with tab_data:
     proj_df = df[df['專案'] == global_project].copy()
-    if not proj_df.empty:
+    if proj_df.empty: st.info(f"專案【{global_project}】無資料")
+    else:
         c1, c2, c3 = st.columns([2, 2, 2])
         months = sorted(proj_df['月份'].unique().tolist(), reverse=True)
         with c1: ed_month = st.selectbox("編輯月份", months, key="ed_m")
@@ -340,44 +322,85 @@ with tab_data:
         with c2: ed_date = st.selectbox("日期篩選", ["整個月"] + dates, key="ed_d")
         with c3: search = st.text_input("搜尋關鍵字", key="search_key")
         st.divider()
+
         def render_section(cat_key, cat_disp, cat_type, key):
             sk = f"conf_{key}"; 
             if sk not in st.session_state: st.session_state[sk] = False
+            # 取得該範圍內的所有資料
             sec_df = month_df[month_df['類別'] == cat_key].copy()
             if not sec_df.empty:
                 st.subheader(cat_disp)
                 view = sec_df.copy()
                 if ed_date != "整個月": view = view[view['日期'] == ed_date]
-                if search: mask = view.apply(lambda x: search in str(x['名稱']) or search in str(x['備註']), axis=1); view = view[mask]
+                if search:
+                    mask = view.apply(lambda x: search in str(x['名稱']) or search in str(x['備註']), axis=1)
+                    view = view[mask]
+                
                 if not view.empty:
                     view['🗓️ 星期/節日'] = view['日期'].apply(lambda x: get_date_info(x)[0])
                     if '刪除' not in view.columns: view.insert(0, "刪除", False)
-                    if cat_disp.startswith("01.") or cat_disp.startswith("02."): cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '備註']
-                    elif cat_disp.startswith("03.") or cat_disp.startswith("04."): cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '單位', '備註']
-                    else: cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '數量', '單位', '單價', '總價', '備註']
-                    view = view[[c for c in cols_to_show if c in view.columns]]
-                    col_cfg = {"刪除": st.column_config.CheckboxColumn(width="small"), "日期": st.column_config.DateColumn(format="YYYY-MM-DD", width="small"), "🗓️ 星期/節日": st.column_config.TextColumn(disabled=True, width="medium"), "名稱": st.column_config.TextColumn(width="medium"), "數量": st.column_config.NumberColumn(width="small"), "單位": st.column_config.TextColumn(width="small"), "單價": st.column_config.NumberColumn(width="small"), "總價": st.column_config.NumberColumn(disabled=True, width="small"), "備註": st.column_config.TextColumn(width="large")}
-                    edited = st.data_editor(view.sort_values('日期', ascending=False), key=f"e_{key}", column_config=col_cfg, use_container_width=True, hide_index=True)
+                    
+                    if cat_disp.startswith("01.") or cat_disp.startswith("02."):
+                        cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '備註']
+                    elif cat_disp.startswith("03.") or cat_disp.startswith("04."):
+                        cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '單位', '備註']
+                    else:
+                        cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '數量', '單位', '單價', '總價', '備註']
+                    view_final = view[[c for c in cols_to_show if c in view.columns]]
+
+                    col_cfg = {
+                        "刪除": st.column_config.CheckboxColumn(width="small"),
+                        "日期": st.column_config.DateColumn(format="YYYY-MM-DD", width="small"),
+                        "🗓️ 星期/節日": st.column_config.TextColumn(disabled=True, width="medium"),
+                        "名稱": st.column_config.TextColumn(width="medium"),
+                        "數量": st.column_config.NumberColumn(width="small"),
+                        "單位": st.column_config.TextColumn(width="small"),
+                        "單價": st.column_config.NumberColumn(width="small"),
+                        "總價": st.column_config.NumberColumn(disabled=True, width="small"),
+                        "備註": st.column_config.TextColumn(width="large")
+                    }
+                    
+                    edited = st.data_editor(view_final.sort_values('日期', ascending=False), key=f"e_{key}", column_config=col_cfg, use_container_width=True, hide_index=True)
+                    
                     b1, b2, _ = st.columns([1, 1, 6])
                     with b1: 
                         if st.button("💾 更新修改", key=f"s_{key}"): 
-                            merged = pd.concat([sec_df[~sec_df.index.isin(view.index)], edited.drop(columns=['刪除'])], ignore_index=True)
-                            save_dataframe(update_by_scope(df, merged, global_project, ed_month, cat_key))
-                            st.toast("已更新"); time.sleep(0.5); st.rerun()
+                            # --- 核心修復邏輯：Scoped Update ---
+                            # 1. 找出目前全域 df 中，不屬於此專案/月份/類別的資料
+                            global_mask = (df['專案'] == global_project) & (df['月份'] == ed_month) & (df['類別'] == cat_key)
+                            df_kept = df[~global_mask].copy()
+                            # 2. 處理編輯後的資料（移除 UI 專用欄位）
+                            edited_clean = edited.drop(columns=['刪除', '🗓️ 星期/節日'], errors='ignore')
+                            if cat_type == 'cost':
+                                edited_clean['總價'] = edited_clean['數量'] * edited_clean['單價']
+                            else:
+                                edited_clean['總價'] = 0
+                            # 3. 合併並存檔
+                            df_final = pd.concat([df_kept, edited_clean], ignore_index=True)
+                            save_dataframe(df_final)
+                            st.toast("✅ 已更新"); time.sleep(0.5); st.rerun()
+
                     with b2: 
                         if st.button("🗑️ 刪除選取", key=f"d_{key}", type="primary"): 
                             if not edited[edited['刪除']].empty: st.session_state[sk] = True
                     if st.session_state[sk]: 
-                        st.warning("確定刪除？"); cy, cn = st.columns(2)
+                        st.warning("確定刪除？")
+                        cy, cn = st.columns(2)
                         with cy:
                             if st.button("✔️ 是", key=f"y_{key}"):
-                                merged = pd.concat([sec_df[~sec_df.index.isin(view.index)], edited[~edited['刪除']].drop(columns=['刪除'])], ignore_index=True)
-                                save_dataframe(update_by_scope(df, merged, global_project, ed_month, cat_key))
+                                global_mask = (df['專案'] == global_project) & (df['月份'] == ed_month) & (df['類別'] == cat_key)
+                                df_kept = df[~global_mask].copy()
+                                edited_not_deleted = edited[~edited['刪除']].drop(columns=['刪除', '🗓️ 星期/節日'], errors='ignore')
+                                df_final = pd.concat([df_kept, edited_not_deleted], ignore_index=True)
+                                save_dataframe(df_final)
                                 st.session_state[sk] = False; st.rerun()
                         with cn:
                             if st.button("❌ 否", key=f"n_{key}"): st.session_state[sk] = False; st.rerun()
-        for config in CAT_CONFIG_LIST: render_section(config["key"], config["display"], config["type"], f"sec_{config['key']}")
 
+        for config in CAT_CONFIG_LIST:
+            render_section(config["key"], config["display"], config["type"], f"sec_{config['key']}")
+
+# === Tab 3 & 4: (維持原狀) ===
 with tab_dash:
     if not df.empty:
         dash_df = df[df['專案'] == global_project].copy()
@@ -404,11 +427,10 @@ with tab_dash:
                         st.bar_chart(c_data.groupby('名稱')['總價'].sum().reset_index().sort_values('總價', ascending=False), x='名稱', y='總價')
             else: st.info(f"{sel_m} 尚無金額紀錄。")
 
-# === Tab 4: (完全不變動) ===
 with tab_settings:
     st.header("🏗️ 專案管理區")
     with st.expander("📦 資料備份中心", expanded=False):
-        st.download_button("📦 下載完整備份 (ZIP)", create_zip_backup(), file_name=f"backup_{datetime.now().strftime('%Y%m%d')}.zip", mime="application/zip")
+        st.download_button("📦 下載完整備份 (ZIP)", create_zip_backup(), file_name=f"full_backup_{datetime.now().strftime('%Y%m%d')}.zip", mime="application/zip")
         uploaded_file = st.file_uploader("📤 系統還原 (ZIP/CSV/JSON)", type=['csv', 'zip', 'json'])
         if uploaded_file and st.button("⚠️ 確認執行還原"):
             try:
