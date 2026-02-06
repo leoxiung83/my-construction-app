@@ -597,7 +597,7 @@ with tab_settings:
         p_items = settings_data["items"][global_project]
         if global_project not in price_data: price_data[global_project] = {}
         
-        # 1. 匯入範本
+        # 1. 匯入範本 (修改：增加確認鍵)
         with st.expander("1. 從其他專案匯入選單範本", expanded=False):
             other_projects = [p for p in settings_data["projects"] if p != global_project]
             if not other_projects: st.info("無其他專案可匯入。")
@@ -606,21 +606,41 @@ with tab_settings:
                 with c_src: source_proj = st.selectbox("選擇來源", other_projects)
                 with c_btn:
                     st.write("")
-                    if st.button("📥 匯入", type="primary"):
-                        src_items = settings_data["items"].get(source_proj, {})
-                        tgt_items = settings_data["items"].get(global_project, {})
-                        for cat, items in src_items.items():
-                            if cat not in tgt_items: tgt_items[cat] = []
-                            for item in items:
-                                if item not in tgt_items[cat]: tgt_items[cat].append(item)
-                        src_prices = price_data.get(source_proj, {})
-                        if global_project not in price_data: price_data[global_project] = {}
-                        for cat, p_items in src_prices.items():
-                            if cat not in price_data[global_project]: price_data[global_project][cat] = {}
-                            for iname, pval in p_items.items():
-                                if iname not in price_data[global_project][cat]: price_data[global_project][cat][iname] = pval
-                        save_settings(settings_data); save_prices(price_data)
-                        st.success("匯入成功"); time.sleep(1); st.rerun()
+                    # 初始化 session state key
+                    if "import_confirm_state" not in st.session_state:
+                        st.session_state.import_confirm_state = False
+
+                    # 如果還沒按過匯入，顯示匯入按鈕
+                    if not st.session_state.import_confirm_state:
+                        if st.button("📥 匯入", type="primary"):
+                            st.session_state.import_confirm_state = True
+                            st.rerun()
+                    
+                    # 如果按了匯入，顯示確認選項
+                    else:
+                        st.warning("確定匯入？")
+                        cy, cn = st.columns(2)
+                        with cy:
+                            if st.button("是", key="yes_imp"):
+                                src_items = settings_data["items"].get(source_proj, {})
+                                tgt_items = settings_data["items"].get(global_project, {})
+                                for cat, items in src_items.items():
+                                    if cat not in tgt_items: tgt_items[cat] = []
+                                    for item in items:
+                                        if item not in tgt_items[cat]: tgt_items[cat].append(item)
+                                src_prices = price_data.get(source_proj, {})
+                                if global_project not in price_data: price_data[global_project] = {}
+                                for cat, p_items in src_prices.items():
+                                    if cat not in price_data[global_project]: price_data[global_project][cat] = {}
+                                    for iname, pval in p_items.items():
+                                        if iname not in price_data[global_project][cat]: price_data[global_project][cat][iname] = pval
+                                save_settings(settings_data); save_prices(price_data)
+                                st.session_state.import_confirm_state = False
+                                st.success("匯入成功"); time.sleep(1); st.rerun()
+                        with cn:
+                            if st.button("否", key="no_imp"):
+                                st.session_state.import_confirm_state = False
+                                st.rerun()
 
         # 2. 新增管理項目
         with st.expander("2. 新增管理項目 (新增大標題)", expanded=False):
