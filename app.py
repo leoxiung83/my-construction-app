@@ -147,7 +147,6 @@ def load_data():
 def save_dataframe(df):
     sheet = get_google_sheet()
     if not sheet: return
-    # --- 關鍵修正：解決 NaN 導致 JSON 錯誤的問題 ---
     df_save = df.copy().fillna('') 
     df_save = df_save.drop(columns=[c for c in ['月份', '刪除', 'temp_month', '星期/節日'] if c in df_save.columns])
     df_save['日期'] = df_save['日期'].astype(str)
@@ -419,13 +418,32 @@ with tab_dash:
 with tab_settings:
     st.header("🏗️ 專案管理區")
     
-    # 1. 資料備份中心
+    # 1. 資料備份中心 (含自動同步專案邏輯)
     with st.expander("📦 資料備份中心", expanded=False):
         st.download_button("📦 下載完整備份 (ZIP)", create_zip_backup(), file_name=f"full_backup_{datetime.now().strftime('%Y%m%d')}.zip")
         uploaded_file = st.file_uploader("📤 系統還原 (ZIP/CSV)", type=['csv', 'zip'])
         if uploaded_file and st.button("⚠️ 確認還原"):
             try:
-                if uploaded_file.name.endswith('.csv'): save_dataframe(pd.read_csv(uploaded_file)); st.success("還原成功")
+                if uploaded_file.name.endswith('.csv'):
+                    # 讀取 CSV
+                    df_new = pd.read_csv(uploaded_file, encoding='utf-8-sig')
+                    # 檢查必備欄位
+                    required = ['日期', '專案', '類別', '名稱', '單位', '數量', '單價', '總價', '備註']
+                    if all(c in df_new.columns for c in required):
+                        save_dataframe(df_new)
+                        # --- 核心邏輯：自動將 CSV 中的專案加入清單 ---
+                        new_projs = df_new['專案'].unique().tolist()
+                        changed = False
+                        for p in new_projs:
+                            if p and p not in settings_data["projects"]:
+                                settings_data["projects"].append(p)
+                                if p not in settings_data["items"]:
+                                    settings_data["items"][p] = copy.deepcopy(DEFAULT_ITEMS)
+                                changed = True
+                        if changed: save_settings(settings_data)
+                        st.success("還原成功！已同步專案清單。")
+                        time.sleep(1); st.rerun()
+                    else: st.error("CSV 格式不符，缺少必要欄位。")
                 elif uploaded_file.name.endswith('.zip'):
                     with zipfile.ZipFile(uploaded_file, 'r') as z: z.extractall(".")
                     st.success("系統環境還原成功"); time.sleep(1); st.rerun()
@@ -459,14 +477,9 @@ with tab_settings:
                     st.session_state.mem_project = settings_data["projects"][0]; st.rerun()
 
     st.divider()
-    
-    # --- 第二大部分：選單項目管理 ---
     st.subheader("📋 選單項目管理")
-    
     if global_project in settings_data["items"]:
         p_items = settings_data["items"][global_project]
-        
-        # 1. 匯入範本 (含確認機制)
         with st.expander("1. 從其他專案匯入選單範本", expanded=False):
             other_projects = [p for p in settings_data["projects"] if p != global_project]
             if other_projects:
@@ -487,8 +500,6 @@ with tab_settings:
                                     if it not in p_items[cat]: p_items[cat].append(it)
                             save_settings(settings_data); st.session_state.imp_state = False; st.success("匯入成功"); time.sleep(1); st.rerun()
                         if st.button("否", key="n_imp"): st.session_state.imp_state = False; st.rerun()
-
-        # 2. 新增管理項目
         with st.expander("2. 新增管理項目 (新增大標題)", expanded=False):
             c_n, c_t, c_b = st.columns([2, 2, 1])
             with c_n: nb_name = st.text_input("區塊名稱 (如: 07.安全檢查)")
@@ -498,8 +509,6 @@ with tab_settings:
                 if st.button("新增標題"):
                     nk = nb_name.split('.')[-1].strip() if '.' in nb_name else nb_name
                     if add_new_category_block(nk, nb_name, nb_type, settings_data): st.success("已新增"); time.sleep(0.5); st.rerun()
-
-        # 3. 既有選單項目管理 (紅線邏輯：上層改標題，下層管理細項)
         with st.expander("3. 既有選單項目管理 (修改大標題 / 細項內容)", expanded=True):
             st.markdown("##### 修改大標題名稱")
             for i, config in enumerate(CAT_CONFIG_LIST):
@@ -510,12 +519,9 @@ with tab_settings:
                     if ndp != config['display'] and st.button("更新標題", key=f"uc_{i}"): update_category_config(i, ndp, settings_data); st.rerun()
                 with c_dl:
                     if st.button("🗑️", key=f"dc_{i}"): delete_category_block(i, settings_data); st.rerun()
-            
-            st.markdown("---") # 紅線區隔
-            st.markdown("##### 管理項目細項內容")
+            st.markdown("---"); st.markdown("##### 管理項目細項內容")
             target_display = st.selectbox("選擇要管理的類別", [c["display"] for c in CAT_CONFIG_LIST])
             t_conf = next((c for c in CAT_CONFIG_LIST if c["display"] == target_display), None)
-            
             if t_conf:
                 tk = t_conf["key"]; ct = t_conf["type"]; curr_list = p_items.get(tk, [])
                 c_ad, c_act = st.columns([3, 1])
@@ -524,7 +530,6 @@ with tab_settings:
                     st.write(""); st.write("")
                     if st.button("➕ 加入清單", key=f"ba_{tk}"):
                         if ni and ni not in curr_list: p_items[tk].append(ni); save_settings(settings_data); st.rerun()
-                
                 st.markdown(f"**目前項目清單 ({len(curr_list)})**")
                 for item in curr_list:
                     cols = st.columns([2, 2, 1, 1, 1, 1]) if ct == 'cost' else st.columns([3, 3, 1, 1])
@@ -536,7 +541,6 @@ with tab_settings:
                         with cols[3]: nu = st.text_input("U", value=p_info["unit"], key=f"u_{tk}_{item}", label_visibility="collapsed")
                         s_idx, d_idx = 4, 5
                     else: s_idx, d_idx = 2, 3
-                    
                     with cols[s_idx]:
                         if st.button("💾", key=f"sv_{tk}_{item}"):
                             if rnn != item: update_item_name(global_project, tk, item, rnn, settings_data, price_data)
