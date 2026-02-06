@@ -141,7 +141,7 @@ def load_data():
         for col in ['專案', '類別', '名稱', '單位', '備註']:
             df[col] = df[col].fillna("").astype(str)
 
-        # 關鍵修正: 轉換日期並移除無效日期 (NaN/NaT)，這解決了 Streamlit DateColumn 崩潰問題
+        # 關鍵修正: 轉換日期並移除無效日期 (NaN/NaT)
         df['日期'] = pd.to_datetime(df['日期'], errors='coerce').dt.date
         df = df.dropna(subset=['日期']) 
 
@@ -269,7 +269,7 @@ with st.sidebar:
     if st.button("🔄 強制重新整理"): st.cache_resource.clear(); st.rerun()
     if st.button("🔒 登出"): st.session_state.logged_in = False; st.rerun()
 
-tab_entry, tab_data, tab_dash, tab_settings = st.tabs(["📝 快速日報輸入", "🛠️ 報表總覽與編輯修正", "📊 成本儀表板", "⚙️ 設定與管理"])
+tab_entry, tab_data, tab_dash, tab_settings = st.tabs(["📝 快速日報輸入", "🛠️ 報表總覽與編輯修正", "📊 成本儀表板", "🏗️ 專案管理區"])
 
 # === Tab 1: 快速日報輸入 ===
 with tab_entry:
@@ -519,10 +519,11 @@ with tab_dash:
                 else: st.info("此月份無費用資料")
             else: st.info(f"{sel_year} 年尚無金額紀錄。")
 
-# === Tab 4: 設定 ===
+# === Tab 4: 專案管理區 (重構排版) ===
 with tab_settings:
-    st.header("⚙️ 設定與管理")
+    st.header("🏗️ 專案管理區")
     
+    # 1. 資料備份中心
     with st.expander("📦 資料備份中心", expanded=False):
         st.markdown("此功能會備份雲端資料 (CSV) 與本地設定檔 (JSON)。")
         st.download_button("📦 下載完整備份 (ZIP)", create_zip_backup(), file_name=f"full_backup_{datetime.now().strftime('%Y%m%d')}.zip", mime="application/zip")
@@ -537,6 +538,7 @@ with tab_settings:
                     st.success("系統完整還原成功！"); time.sleep(1); st.rerun()
             except Exception as e: st.error(f"還原失敗：{e}")
 
+    # 2. 專案管理
     with st.expander("1. 專案管理", expanded=True):
         c1, c2, c3 = st.columns([2, 2, 1])
         with c1:
@@ -586,45 +588,17 @@ with tab_settings:
                 with dn:
                     if st.button("否", key="cancel_del_proj"): st.session_state[del_proj_key] = False; st.rerun()
 
-    st.subheader("3. 標題與選單項目管理")
+    st.divider()
+    
+    st.subheader("📋 選單項目管理")
     st.caption(f"正在設定：**{global_project}**")
     
     if global_project in settings_data["items"]:
         p_items = settings_data["items"][global_project]
         if global_project not in price_data: price_data[global_project] = {}
         
-        with st.expander("🔧 管理日報大標題 (修改名稱 / 新增管理項目)", expanded=False):
-            st.markdown("##### 修改現有標題名稱")
-            for i, config in enumerate(CAT_CONFIG_LIST):
-                c_old, c_new, c_act, c_del = st.columns([2, 2, 1, 1])
-                with c_old: st.text(f"原: {config['display']}")
-                with c_new: new_disp = st.text_input(f"新名稱 {i}", value=config['display'], label_visibility="collapsed")
-                with c_act: 
-                    if new_disp != config['display']:
-                        if st.button("更新", key=f"upd_cat_{i}"):
-                            update_category_config(i, new_disp, settings_data); st.success("更新成功"); time.sleep(0.5); st.rerun()
-                with c_del:
-                    del_key = f"del_verify_{i}"
-                    if del_key not in st.session_state: st.session_state[del_key] = False
-                    if not st.session_state[del_key]:
-                        if st.button("🗑️", key=f"btn_del_cat_{i}"): st.session_state[del_key] = True; st.rerun()
-                    else:
-                        if st.button("是", key=f"yes_del_{i}"): delete_category_block(i, settings_data); del st.session_state[del_key]; st.rerun()
-                        if st.button("否", key=f"no_del_{i}"): st.session_state[del_key] = False; st.rerun()
-            
-            st.markdown("---")
-            st.markdown("#### ➕ 新增管理項目")
-            c_n, c_t, c_b = st.columns([2, 2, 1])
-            with c_n: new_block_name = st.text_input("區塊名稱 (如: 07.安全檢查)")
-            with c_t: new_block_type = st.selectbox("類型", ["text", "usage", "cost"], format_func=lambda x: {"text": "文字", "usage": "數量", "cost": "成本"}[x])
-            with c_b: 
-                st.write("")
-                if st.button("新增"):
-                    new_key = new_block_name.split('.')[-1].strip() if '.' in new_block_name else new_block_name
-                    if add_new_category_block(new_key, new_block_name, new_block_type, settings_data): st.success("已新增"); time.sleep(0.5); st.rerun()
-                    else: st.error("區塊 Key 已存在")
-
-        with st.expander("🔄 從其他專案匯入選單範本", expanded=False):
+        # 1. 匯入範本
+        with st.expander("1. 從其他專案匯入選單範本", expanded=False):
             other_projects = [p for p in settings_data["projects"] if p != global_project]
             if not other_projects: st.info("無其他專案可匯入。")
             else:
@@ -648,58 +622,92 @@ with tab_settings:
                         save_settings(settings_data); save_prices(price_data)
                         st.success("匯入成功"); time.sleep(1); st.rerun()
 
-        st.divider()
+        # 2. 新增管理項目
+        with st.expander("2. 新增管理項目 (新增大標題)", expanded=False):
+            c_n, c_t, c_b = st.columns([2, 2, 1])
+            with c_n: new_block_name = st.text_input("區塊名稱 (如: 07.安全檢查)")
+            with c_t: new_block_type = st.selectbox("類型", ["text", "usage", "cost"], format_func=lambda x: {"text": "文字", "usage": "數量", "cost": "成本"}[x])
+            with c_b: 
+                st.write("")
+                if st.button("新增"):
+                    new_key = new_block_name.split('.')[-1].strip() if '.' in new_block_name else new_block_name
+                    if add_new_category_block(new_key, new_block_name, new_block_type, settings_data): st.success("已新增"); time.sleep(0.5); st.rerun()
+                    else: st.error("區塊 Key 已存在")
 
-        cat_options = [c["display"] for c in CAT_CONFIG_LIST]
-        target_display = st.selectbox("選擇要管理項目的類別", cat_options)
-        target_config = next((c for c in CAT_CONFIG_LIST if c["display"] == target_display), None)
-        
-        if target_config:
-            target_key = target_config["key"]
-            cat_type = target_config["type"]
-            curr_list = p_items.get(target_key, [])
+        # 3. 既有選單項目管理
+        with st.expander("3. 既有選單項目管理 (修改大標題 / 細項內容)", expanded=True):
+            st.markdown("##### 修改大標題名稱")
+            for i, config in enumerate(CAT_CONFIG_LIST):
+                c_old, c_new, c_act, c_del = st.columns([2, 2, 1, 1])
+                with c_old: st.text(f"原: {config['display']}")
+                with c_new: new_disp = st.text_input(f"新名稱 {i}", value=config['display'], label_visibility="collapsed")
+                with c_act: 
+                    if new_disp != config['display']:
+                        if st.button("更新", key=f"upd_cat_{i}"):
+                            update_category_config(i, new_disp, settings_data); st.success("更新成功"); time.sleep(0.5); st.rerun()
+                with c_del:
+                    del_key = f"del_verify_{i}"
+                    if del_key not in st.session_state: st.session_state[del_key] = False
+                    if not st.session_state[del_key]:
+                        if st.button("🗑️", key=f"btn_del_cat_{i}"): st.session_state[del_key] = True; st.rerun()
+                    else:
+                        if st.button("是", key=f"yes_del_{i}"): delete_category_block(i, settings_data); del st.session_state[del_key]; st.rerun()
+                        if st.button("否", key=f"no_del_{i}"): st.session_state[del_key] = False; st.rerun()
             
-            c_add, c_act = st.columns([3, 1])
-            with c_add: new_option = st.text_input(f"在【{target_display}】新增選單項目", key=f"new_opt_{target_key}")
-            with c_act:
-                st.write(""); st.write("")
-                if st.button("➕ 加入項目", key=f"btn_add_{target_key}"):
-                    if new_option and new_option not in curr_list:
-                        settings_data["items"][global_project][target_key].append(new_option)
-                        save_settings(settings_data); st.success(f"已加入"); time.sleep(0.5); st.rerun()
+            # --- 按照指示將管理功能放在紅線下方 ---
+            st.markdown("---")
+            st.markdown("##### 管理項目細項內容")
 
-            st.markdown(f"##### 管理現有項目 ({len(curr_list)})")
+            cat_options = [c["display"] for c in CAT_CONFIG_LIST]
+            target_display = st.selectbox("選擇要管理項目的類別", cat_options)
+            target_config = next((c for c in CAT_CONFIG_LIST if c["display"] == target_display), None)
             
-            if cat_type == 'cost':
-                h1, h2, h3, h4, h5, h6 = st.columns([2, 2, 1, 1, 1, 1])
-                h1.caption("原名稱"); h2.caption("改名"); h3.caption("單價"); h4.caption("單位"); h5.caption("存"); h6.caption("刪")
-            else:
-                h1, h2, h5, h6 = st.columns([3, 3, 1, 1])
-                h1.caption("原名稱"); h2.caption("改名"); h5.caption("存"); h6.caption("刪")
+            if target_config:
+                target_key = target_config["key"]
+                cat_type = target_config["type"]
+                curr_list = p_items.get(target_key, [])
+                
+                c_add, c_act = st.columns([3, 1])
+                with c_add: new_option = st.text_input(f"在【{target_display}】新增選單項目", key=f"new_opt_{target_key}")
+                with c_act:
+                    st.write(""); st.write("")
+                    if st.button("➕ 加入項目", key=f"btn_add_{target_key}"):
+                        if new_option and new_option not in curr_list:
+                            settings_data["items"][global_project][target_key].append(new_option)
+                            save_settings(settings_data); st.success(f"已加入"); time.sleep(0.5); st.rerun()
 
-            for item in curr_list:
-                if cat_type == 'cost': c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 1, 1, 1, 1])
-                else: c1, c2, c5, c6 = st.columns([3, 3, 1, 1])
+                st.markdown(f"**目前項目列表 ({len(curr_list)})**")
                 
-                with c1: st.text(item)
-                with c2: new_name = st.text_input("RN", value=item, key=f"rn_{target_key}_{item}", label_visibility="collapsed")
-                
-                new_p, new_u = 0, ""
                 if cat_type == 'cost':
-                    if target_key not in price_data[global_project]: price_data[global_project][target_key] = {}
-                    p_info = price_data[global_project][target_key].get(item, {"price": 0, "unit": "工"})
-                    with c3: new_p = st.number_input("P", value=float(p_info["price"]), key=f"p_{target_key}_{item}", label_visibility="collapsed")
-                    with c4: new_u = st.text_input("U", value=p_info["unit"], key=f"u_{target_key}_{item}", label_visibility="collapsed")
-                
-                with c5:
-                    if st.button("💾", key=f"sv_{target_key}_{item}"):
-                        if new_name != item: update_item_name(global_project, target_key, item, new_name, settings_data, price_data)
-                        if cat_type == 'cost':
-                            fin_name = new_name if new_name != item else item
-                            price_data[global_project][target_key][fin_name] = {"price": new_p, "unit": new_u}
-                            save_prices(price_data)
-                        st.toast("已儲存"); time.sleep(0.5); st.rerun()
-                with c6:
-                    if st.button("🗑️", key=f"dl_{target_key}_{item}"):
-                        settings_data["items"][global_project][target_key].remove(item)
-                        save_settings(settings_data); st.rerun()
+                    h1, h2, h3, h4, h5, h6 = st.columns([2, 2, 1, 1, 1, 1])
+                    h1.caption("原名稱"); h2.caption("改名"); h3.caption("單價"); h4.caption("單位"); h5.caption("存"); h6.caption("刪")
+                else:
+                    h1, h2, h5, h6 = st.columns([3, 3, 1, 1])
+                    h1.caption("原名稱"); h2.caption("改名"); h5.caption("存"); h6.caption("刪")
+
+                for item in curr_list:
+                    if cat_type == 'cost': c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 1, 1, 1, 1])
+                    else: c1, c2, c5, c6 = st.columns([3, 3, 1, 1])
+                    
+                    with c1: st.text(item)
+                    with c2: new_name = st.text_input("RN", value=item, key=f"rn_{target_key}_{item}", label_visibility="collapsed")
+                    
+                    new_p, new_u = 0, ""
+                    if cat_type == 'cost':
+                        if target_key not in price_data[global_project]: price_data[global_project][target_key] = {}
+                        p_info = price_data[global_project][target_key].get(item, {"price": 0, "unit": "工"})
+                        with c3: new_p = st.number_input("P", value=float(p_info["price"]), key=f"p_{target_key}_{item}", label_visibility="collapsed")
+                        with c4: new_u = st.text_input("U", value=p_info["unit"], key=f"u_{target_key}_{item}", label_visibility="collapsed")
+                    
+                    with c5:
+                        if st.button("💾", key=f"sv_{target_key}_{item}"):
+                            if new_name != item: update_item_name(global_project, target_key, item, new_name, settings_data, price_data)
+                            if cat_type == 'cost':
+                                fin_name = new_name if new_name != item else item
+                                price_data[global_project][target_key][fin_name] = {"price": new_p, "unit": new_u}
+                                save_prices(price_data)
+                            st.toast("已儲存"); time.sleep(0.5); st.rerun()
+                    with c6:
+                        if st.button("🗑️", key=f"dl_{target_key}_{item}"):
+                            settings_data["items"][global_project][target_key].remove(item)
+                            save_settings(settings_data); st.rerun()
