@@ -18,7 +18,7 @@ from datetime import datetime
 st.set_page_config(page_title="多專案施工管理系統 PRO Max (線上版)", layout="wide", page_icon="🏗️")
 
 # --- 🔐 安全設定 ---
-SYSTEM_PASSWORD = "12345" 
+SYSTEM_PASSWORD = "225088" 
 
 # --- 檔案路徑 ---
 SETTINGS_FILE = 'settings.json'
