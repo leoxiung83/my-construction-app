@@ -18,9 +18,9 @@ from datetime import datetime
 st.set_page_config(page_title="多專案施工管理系統 PRO Max (線上版)", layout="wide", page_icon="🏗️")
 
 # --- 🔐 安全設定 ---
-SYSTEM_PASSWORD = "225088" 
+SYSTEM_PASSWORD = "12345" 
 
-# --- 檔案路徑 ---
+# --- 檔案路徑 (本地設定檔) ---
 SETTINGS_FILE = 'settings.json'
 PRICES_FILE = 'item_prices.json'
 KEY_FILE = 'service_key.json'      # Google API 金鑰
@@ -153,16 +153,6 @@ def append_data(date, project, category, category_type, name, unit, qty, price, 
     sheet = get_google_sheet()
     if sheet: sheet.append_row(row)
 
-def update_by_scope(original_df, edited_part, proj, month, cat_key):
-    original_df['temp_month'] = pd.to_datetime(original_df['日期']).dt.strftime("%Y-%m")
-    mask = (original_df['temp_month'] == month) & (original_df['專案'] == proj) & (original_df['類別'] == cat_key)
-    df_kept = original_df[~mask].copy()
-    edited_clean = edited_part.drop(columns=[c for c in ['刪除', '星期/節日', '🗓️ 星期/節日'] if c in edited_part.columns])
-    for col in ['數量', '單價']: edited_clean[col] = pd.to_numeric(edited_clean[col], errors='coerce').fillna(0)
-    cat_type = next((c['type'] for c in CAT_CONFIG_LIST if c['key'] == cat_key), 'text')
-    edited_clean['總價'] = edited_clean.apply(lambda r: r['數量']*r['單價'] if cat_type == 'cost' else 0, axis=1)
-    return pd.concat([df_kept, edited_clean], ignore_index=True)
-
 def update_item_name(project, category, old_name, new_name, settings, prices):
     if old_name == new_name: return False
     curr_list = settings["items"][project].get(category, [])
@@ -210,7 +200,7 @@ if 'last_check_date' not in st.session_state: st.session_state.last_check_date =
 # ==========================================
 # 主介面
 # ==========================================
-st.title("🏗️ 多專案施工管理系統 PRO Max (線上版)")
+st.title("🏗️ 多專案施工管理系統 PRO Max (綱項版)")
 
 with st.sidebar:
     st.header("📅 日期與專案設定")
@@ -230,12 +220,12 @@ with st.sidebar:
 
 tab_entry, tab_data, tab_dash, tab_settings = st.tabs(["📝 快速日報輸入", "🛠️ 報表總覽與編輯修正", "📊 成本儀表板", "🏗️ 專案管理區"])
 
-# === Tab 1: 快速日報輸入 (增加備註欄位) ===
+# === Tab 1: 快速日報輸入 (修正預設值連動與新增備註) ===
 with tab_entry:
     st.info(f"正在填寫：**{global_project}** / **{global_date}**")
     d_key = str(global_date); handled_keys = []
 
-    # 1. 施工說明 & 相關紀錄 (固定前兩項)
+    # 1. 施工說明 & 相關紀錄
     if len(CAT_CONFIG_LIST) >= 2:
         with st.expander(f"📝 {CAT_CONFIG_LIST[0]['display']} 及 {CAT_CONFIG_LIST[1]['display']}", expanded=True):
             cols = st.columns(2)
@@ -263,7 +253,6 @@ with tab_entry:
                     with st.form(key=f"f_2_{k}_{d_key}"):
                         q = st.number_input("數量", min_value=0.0, step=1.0, key=f"iq_{k}_{d_key}")
                         u = st.text_input("單位", value=p_set["unit"], key=f"iu_{k}_{d_key}_{it}")
-                        # 🌟 新增備註
                         n = st.text_input("備註", key=f"in_n_{k}_{d_key}")
                         if st.form_submit_button(f"💾 儲存 {k+1}") and opts:
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, 0, n); st.rerun()
@@ -280,7 +269,6 @@ with tab_entry:
                     with st.form(key=f"f_3_{k}_{d_key}"):
                         q = st.number_input("數量", min_value=0.0, step=0.5, key=f"uq_{k}_{d_key}")
                         u = st.text_input("單位", value=p_set["unit"], key=f"uu_{k}_{d_key}_{it}")
-                        # 🌟 新增備註
                         n = st.text_input("備註", key=f"un_n_{k}_{d_key}")
                         if st.form_submit_button(f"💾 儲存 {k+1}") and opts:
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, 0, n); st.rerun()
@@ -301,12 +289,11 @@ with tab_entry:
                         q = cq.number_input("數量", value=1.0, step=0.5, key=f"cq_{i}_{d_key}")
                         p = cp.number_input("單價", value=float(p_set["price"]), key=f"cp_{i}_{d_key}_{it}")
                         u = st.text_input("單位", value=p_set["unit"], key=f"cu_{i}_{d_key}_{it}")
-                        # 🌟 新增備註
                         n = st.text_input("備註", key=f"cn_n_{i}_{d_key}")
                         if st.form_submit_button("💾 新增紀錄") and opts:
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, p, n); st.rerun()
 
-    # 🌟 動態同步區：自動偵測並顯示你在管理區新增的所有剩餘標題 (增加備註)
+    # 🌟 動態同步區：自動偵測並顯示你在管理區新增的所有剩餘標題
     for conf in CAT_CONFIG_LIST:
         if conf["key"] not in handled_keys:
             with st.expander(f"📌 {conf['display']}", expanded=True):
@@ -322,15 +309,15 @@ with tab_entry:
                             q = c1.number_input("數量", value=1.0, key=f"dq_{conf['key']}")
                             p = c2.number_input("單價", value=float(p_set["price"]), key=f"dp_{conf['key']}_{it}") if conf["type"] == 'cost' else 0
                             u = c3.text_input("單位", value=p_set["unit"], key=f"du_{conf['key']}_{it}")
-                            # 🌟 新增備註
                             tx = st.text_input("備註", key=f"dn_n_{conf['key']}")
                         if st.form_submit_button("💾 儲存資料"):
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, p, tx); st.rerun()
 
-# === Tab 2 & 3 & 4 (完全不變動) ===
+# === Tab 2: 報表總覽 (修正更新不見問題與數量排序) ===
 with tab_data:
     proj_df = df[df['專案'] == global_project].copy()
-    if not proj_df.empty:
+    if proj_df.empty: st.info(f"專案【{global_project}】無資料")
+    else:
         c1, c2, c3 = st.columns([2, 2, 2])
         months = sorted(proj_df['月份'].unique().tolist(), reverse=True)
         with c1: ed_month = st.selectbox("編輯月份", months, key="ed_m")
@@ -339,6 +326,7 @@ with tab_data:
         with c2: ed_date = st.selectbox("日期篩選", ["整個月"] + dates, key="ed_d")
         with c3: search = st.text_input("搜尋關鍵字", key="search_key")
         st.divider()
+
         def render_section(cat_key, cat_disp, cat_type, key):
             sk = f"conf_{key}"; 
             if sk not in st.session_state: st.session_state[sk] = False
@@ -347,16 +335,25 @@ with tab_data:
                 st.subheader(cat_disp)
                 view = sec_df.copy()
                 if ed_date != "整個月": view = view[view['日期'] == ed_date]
-                if search: mask = view.apply(lambda x: search in str(x['名稱']) or search in str(x['備註']), axis=1); view = view[mask]
+                if search:
+                    mask = view.apply(lambda x: search in str(x['名稱']) or search in str(x['備註']), axis=1)
+                    view = view[mask]
+                
                 if not view.empty:
                     view['🗓️ 星期/節日'] = view['日期'].apply(lambda x: get_date_info(x)[0])
                     if '刪除' not in view.columns: view.insert(0, "刪除", False)
-                    if cat_disp.startswith("01.") or cat_disp.startswith("02."): cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '備註']
-                    elif cat_disp.startswith("03.") or cat_disp.startswith("04."): cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '單位', '數量', '備註']
-                    else: cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '數量', '單位', '單價', '總價', '備註']
+                    
+                    if cat_disp.startswith("01.") or cat_disp.startswith("02."):
+                        cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '備註']
+                    elif cat_disp.startswith("03.") or cat_disp.startswith("04.") or cat_type == 'usage':
+                        cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '單位', '數量', '備註']
+                    else:
+                        cols_to_show = ['刪除', '日期', '🗓️ 星期/節日', '名稱', '數量', '單位', '單價', '總價', '備註']
+                    
                     view_final = view[[c for c in cols_to_show if c in view.columns]]
                     col_cfg = {"刪除": st.column_config.CheckboxColumn(width="small"), "日期": st.column_config.DateColumn(format="YYYY-MM-DD", width="small"), "🗓️ 星期/節日": st.column_config.TextColumn(disabled=True, width="medium"), "名稱": st.column_config.TextColumn(width="medium"), "數量": st.column_config.NumberColumn(width="small"), "單位": st.column_config.TextColumn(width="small"), "單價": st.column_config.NumberColumn(width="small"), "總價": st.column_config.NumberColumn(disabled=True, width="small"), "備註": st.column_config.TextColumn(width="large")}
                     edited = st.data_editor(view_final.sort_values('日期', ascending=False), key=f"e_{key}", column_config=col_cfg, use_container_width=True, hide_index=True)
+                    
                     b1, b2, _ = st.columns([1, 1, 6])
                     with b1: 
                         if st.button("💾 更新修改", key=f"s_{key}"): 
@@ -368,19 +365,21 @@ with tab_data:
                                 delete_indices = edited[edited['刪除']].index
                                 if not delete_indices.empty: df.drop(delete_indices, inplace=True)
                             save_dataframe(df); st.toast("✅ 更新成功"); time.sleep(0.5); st.rerun()
+
                     with b2: 
                         if st.button("🗑️ 刪除選取", key=f"d_{key}", type="primary"): 
                             if not edited[edited['刪除']].empty: st.session_state[sk] = True
                     if st.session_state[sk]: 
-                        st.warning("確定刪除？"); cy, cn = st.columns(2)
-                        with cy:
-                            if st.button("✔️ 是", key=f"y_{key}"):
-                                delete_indices = edited[edited['刪除']].index
-                                df.drop(delete_indices, inplace=True); save_dataframe(df); st.session_state[sk] = False; st.rerun()
-                        with cn:
-                            if st.button("❌ 否", key=f"n_{key}"): st.session_state[sk] = False; st.rerun()
-        for config in CAT_CONFIG_LIST: render_section(config["key"], config["display"], config["type"], f"sec_{config['key']}")
+                        st.warning("確定刪除？")
+                        if st.button("✔️ 是", key=f"y_{key}"):
+                            delete_indices = edited[edited['刪除']].index
+                            df.drop(delete_indices, inplace=True); save_dataframe(df); st.session_state[sk] = False; st.rerun()
+                        if st.button("❌ 否", key=f"n_{key}"): st.session_state[sk] = False; st.rerun()
 
+        for config in CAT_CONFIG_LIST:
+            render_section(config["key"], config["display"], config["type"], f"sec_{config['key']}")
+
+# === Tab 3: 成本儀表板 ===
 with tab_dash:
     if not df.empty:
         dash_df = df[df['專案'] == global_project].copy()
@@ -407,6 +406,7 @@ with tab_dash:
                         st.bar_chart(c_data.groupby('名稱')['總價'].sum().reset_index().sort_values('總價', ascending=False), x='名稱', y='總價')
             else: st.info(f"{sel_m} 尚無金額紀錄。")
 
+# === Tab 4: 🏗️ 專案管理區 (修正語法錯誤) ===
 with tab_settings:
     st.header("🏗️ 專案管理區")
     with st.expander("📦 資料備份中心", expanded=False):
