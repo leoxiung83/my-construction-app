@@ -15,10 +15,12 @@ from datetime import datetime
 # ==========================================
 # 0. 系統設定
 # ==========================================
-st.set_page_config(page_title="多專案施工管理系統 PRO Max (線上版)", layout="wide", page_icon="🏗️")
+# 修改 1: 更新網頁標題設定
+st.set_page_config(page_title="專案施工管理系統 PRO Max (線上版)", layout="wide", page_icon="🏗️")
 
 # --- 🔐 安全設定 ---
-SYSTEM_PASSWORD = "12345" 
+# 修改 2: 更新密碼
+SYSTEM_PASSWORD = "225088" 
 
 # --- 檔案路徑 (本地設定檔) ---
 SETTINGS_FILE = 'settings.json'
@@ -200,7 +202,8 @@ if 'last_check_date' not in st.session_state: st.session_state.last_check_date =
 # ==========================================
 # 主介面
 # ==========================================
-st.title("🏗️ 多專案施工管理系統 PRO Max (綱項版)")
+# 修改 3: 更新主標題
+st.title("🏗️ 專案施工管理系統 PRO Max (線上版)")
 
 with st.sidebar:
     st.header("📅 日期與專案設定")
@@ -220,7 +223,7 @@ with st.sidebar:
 
 tab_entry, tab_data, tab_dash, tab_settings = st.tabs(["📝 快速日報輸入", "🛠️ 報表總覽與編輯修正", "📊 成本儀表板", "🏗️ 專案管理區"])
 
-# === Tab 1: 快速日報輸入 (修正預設值連動與新增備註) ===
+# === Tab 1: 快速日報輸入 (維持原樣：包含備註與自動抓取) ===
 with tab_entry:
     st.info(f"正在填寫：**{global_project}** / **{global_date}**")
     d_key = str(global_date); handled_keys = []
@@ -241,7 +244,7 @@ with tab_entry:
                         if st.form_submit_button("💾 儲存") and opts:
                             append_data(global_date, global_project, conf["key"], conf["type"], it, p_set["unit"], 1, 0, tx); st.toast("儲存成功")
 
-    # 2. 進料管理 (增加備註)
+    # 2. 進料管理
     if len(CAT_CONFIG_LIST) >= 3:
         conf = CAT_CONFIG_LIST[2]; handled_keys.append(conf["key"])
         with st.expander(f"🚛 {conf['display']}", expanded=True):
@@ -257,7 +260,7 @@ with tab_entry:
                         if st.form_submit_button(f"💾 儲存 {k+1}") and opts:
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, 0, n); st.rerun()
 
-    # 3. 用料管理 (增加備註)
+    # 3. 用料管理
     if len(CAT_CONFIG_LIST) >= 4:
         conf = CAT_CONFIG_LIST[3]; handled_keys.append(conf["key"])
         with st.expander(f"🧱 {conf['display']}", expanded=True):
@@ -273,7 +276,7 @@ with tab_entry:
                         if st.form_submit_button(f"💾 儲存 {k+1}") and opts:
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, 0, n); st.rerun()
 
-    # 4. 人力與機具 (增加備註)
+    # 4. 人力與機具
     if len(CAT_CONFIG_LIST) >= 6:
         with st.expander("👷 人力與機具出工紀錄", expanded=True):
             cols = st.columns(2)
@@ -293,7 +296,7 @@ with tab_entry:
                         if st.form_submit_button("💾 新增紀錄") and opts:
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, p, n); st.rerun()
 
-    # 🌟 動態同步區：自動偵測並顯示你在管理區新增的所有剩餘標題
+    # 🌟 動態同步區
     for conf in CAT_CONFIG_LIST:
         if conf["key"] not in handled_keys:
             with st.expander(f"📌 {conf['display']}", expanded=True):
@@ -313,7 +316,7 @@ with tab_entry:
                         if st.form_submit_button("💾 儲存資料"):
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, p, tx); st.rerun()
 
-# === Tab 2: 報表總覽 (修正更新不見問題與數量排序) ===
+# === Tab 2: 報表總覽 (維持原樣：排序與更新正常) ===
 with tab_data:
     proj_df = df[df['專案'] == global_project].copy()
     if proj_df.empty: st.info(f"專案【{global_project}】無資料")
@@ -406,7 +409,7 @@ with tab_dash:
                         st.bar_chart(c_data.groupby('名稱')['總價'].sum().reset_index().sort_values('總價', ascending=False), x='名稱', y='總價')
             else: st.info(f"{sel_m} 尚無金額紀錄。")
 
-# === Tab 4: 🏗️ 專案管理區 (修正語法錯誤) ===
+# === Tab 4: 🏗️ 專案管理區 (維持原樣) ===
 with tab_settings:
     st.header("🏗️ 專案管理區")
     with st.expander("📦 資料備份中心", expanded=False):
