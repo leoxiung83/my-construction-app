@@ -15,16 +15,12 @@ from datetime import datetime
 # ==========================================
 # 0. 系統設定
 # ==========================================
-# 修改 1: 更新網頁標題設定
 st.set_page_config(page_title="專案施工管理系統 PRO Max (線上版)", layout="wide", page_icon="🏗️")
 
 # --- 🔐 安全設定 ---
-# 修改 2: 更新密碼
 SYSTEM_PASSWORD = "225088" 
 
-# --- 檔案路徑 (本地設定檔) ---
-SETTINGS_FILE = 'settings.json'
-PRICES_FILE = 'item_prices.json'
+# --- 檔案路徑 ---
 KEY_FILE = 'service_key.json'      # Google API 金鑰
 SHEET_NAME = 'construction_db'     # Google 試算表名稱
 
@@ -72,10 +68,10 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==========================================
-# 2. 核心邏輯
+# 2. 核心邏輯 (優化：引入 Session State 快取)
 # ==========================================
 @st.cache_resource
-def get_google_sheet():
+def get_google_client():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = None
     if os.path.exists(KEY_FILE):
@@ -87,9 +83,17 @@ def get_google_sheet():
                 creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
         except: return None
     if not creds: return None
+    return gspread.authorize(creds)
+
+def get_sheet(sheet_title):
+    client = get_google_client()
+    if not client: return None
     try:
-        client = gspread.authorize(creds)
-        return client.open(SHEET_NAME).sheet1
+        sh = client.open(SHEET_NAME)
+        try:
+            return sh.worksheet(sheet_title)
+        except:
+            return sh.add_worksheet(title=sheet_title, rows="100", cols="20")
     except: return None
 
 def get_date_info(date_obj):
@@ -99,33 +103,47 @@ def get_date_info(date_obj):
     if date_str in HOLIDAYS: return f"🔴 {w_str} ★{HOLIDAYS[date_str]}", True 
     return (f"🔴 {w_str}", True) if date_obj.weekday() >= 5 else (f"{w_str}", False)
 
-def load_json(filepath, default_data):
-    if not os.path.exists(filepath):
-        save_json(filepath, default_data); return default_data
+# --- 雲端設定存取函數 ---
+def load_settings_from_cloud():
+    sheet = get_sheet("settings")
+    default_settings = {"projects": ["預設專案"], "items": {"預設專案": copy.deepcopy(DEFAULT_ITEMS)}, "cat_config": copy.deepcopy(DEFAULT_CAT_CONFIG)}
+    if not sheet: return default_settings
     try:
-        with open(filepath, 'r', encoding='utf-8') as f: return json.load(f)
-    except: return default_data
+        data = sheet.acell('A1').value
+        return json.loads(data) if data else default_settings
+    except: return default_settings
 
-def save_json(filepath, data):
-    with open(filepath, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=4)
+def save_settings_to_cloud(data):
+    # 同步更新 session_state，確保介面即時反應
+    st.session_state.settings_data = data
+    sheet = get_sheet("settings")
+    if sheet:
+        try:
+            json_str = json.dumps(data, ensure_ascii=False)
+            sheet.update(values=[[json_str]], range_name='A1')
+        except Exception as e: st.error(f"雲端存檔錯誤: {e}")
 
-def save_settings(data): save_json(SETTINGS_FILE, data)
+def load_prices_from_cloud():
+    sheet = get_sheet("item_prices")
+    if not sheet: return {}
+    try:
+        data = sheet.acell('A1').value
+        return json.loads(data) if data else {}
+    except: return {}
 
-def load_settings():
-    data = load_json(SETTINGS_FILE, {"projects": ["預設專案"], "items": {"預設專案": copy.deepcopy(DEFAULT_ITEMS)}, "cat_config": copy.deepcopy(DEFAULT_CAT_CONFIG)})
-    if "cat_config" not in data: data["cat_config"] = copy.deepcopy(DEFAULT_CAT_CONFIG); save_settings(data)
-    for proj in data["projects"]:
-        if proj not in data["items"]: data["items"][proj] = {}
-        for cat in data["cat_config"]:
-            if cat["key"] not in data["items"][proj]: data["items"][proj][cat["key"]] = []
-    return data
-
-def load_prices(): return load_json(PRICES_FILE, {})
-def save_prices(data): save_json(PRICES_FILE, data)
+def save_prices_to_cloud(data):
+    # 同步更新 session_state
+    st.session_state.price_data = data
+    sheet = get_sheet("item_prices")
+    if sheet:
+        try:
+            json_str = json.dumps(data, ensure_ascii=False)
+            sheet.update(values=[[json_str]], range_name='A1')
+        except Exception as e: st.error(f"雲端存檔錯誤: {e}")
 
 def load_data():
     cols = ['日期', '專案', '類別', '名稱', '單位', '數量', '單價', '總價', '備註', '月份']
-    sheet = get_google_sheet()
+    sheet = get_sheet("sheet1")
     if not sheet: return pd.DataFrame(columns=cols)
     try:
         data = sheet.get_all_records()
@@ -140,7 +158,7 @@ def load_data():
     except: return pd.DataFrame(columns=cols)
 
 def save_dataframe(df):
-    sheet = get_google_sheet()
+    sheet = get_sheet("sheet1")
     if not sheet: return
     df_save = df.copy().fillna('') 
     df_save = df_save.drop(columns=[c for c in ['月份', '刪除', 'temp_month', '星期/節日', '🗓️ 星期/節日'] if c in df_save.columns])
@@ -152,9 +170,10 @@ def save_dataframe(df):
 def append_data(date, project, category, category_type, name, unit, qty, price, note):
     total = qty * price if category_type == 'cost' else 0
     row = [str(date), project, category, name, unit, qty, price, total, note]
-    sheet = get_google_sheet()
+    sheet = get_sheet("sheet1")
     if sheet: sheet.append_row(row)
 
+# 修正：直接操作 session_state 並上傳
 def update_item_name(project, category, old_name, new_name, settings, prices):
     if old_name == new_name: return False
     curr_list = settings["items"][project].get(category, [])
@@ -162,15 +181,15 @@ def update_item_name(project, category, old_name, new_name, settings, prices):
     if old_name in curr_list: curr_list[curr_list.index(old_name)] = new_name
     if project in prices and category in prices[project] and old_name in prices[project][category]:
         prices[project][category][new_name] = prices[project][category].pop(old_name)
-        save_prices(prices)
+        save_prices_to_cloud(prices)
     df_cur = load_data()
     if not df_cur.empty:
         df_cur.loc[(df_cur['專案']==project) & (df_cur['類別']==category) & (df_cur['名稱']==old_name), '名稱'] = new_name
         save_dataframe(df_cur)
-    save_settings(settings); return True
+    save_settings_to_cloud(settings); return True
 
 def update_category_config(idx, new_display, settings):
-    settings["cat_config"][idx]["display"] = new_display; save_settings(settings); return True
+    settings["cat_config"][idx]["display"] = new_display; save_settings_to_cloud(settings); return True
 
 def add_new_category_block(new_key, new_display, new_type, settings):
     for cat in settings["cat_config"]:
@@ -178,23 +197,34 @@ def add_new_category_block(new_key, new_display, new_type, settings):
     settings["cat_config"].append({"key": new_key, "display": new_display, "type": new_type})
     for proj in settings["items"]:
         if new_key not in settings["items"][proj]: settings["items"][proj][new_key] = []
-    save_settings(settings); return True
+    save_settings_to_cloud(settings); return True
 
 def delete_category_block(idx, settings):
-    del settings["cat_config"][idx]; save_settings(settings); return True
+    del settings["cat_config"][idx]; save_settings_to_cloud(settings); return True
 
 def create_zip_backup():
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         df_bak = load_data()
         zip_file.writestr("construction_data.csv", df_bak.to_csv(index=False))
-        for f in [SETTINGS_FILE, PRICES_FILE]:
-            if os.path.exists(f): zip_file.write(f)
+        stg = load_settings_from_cloud()
+        prc = load_prices_from_cloud()
+        zip_file.writestr("settings.json", json.dumps(stg, ensure_ascii=False, indent=4))
+        zip_file.writestr("item_prices.json", json.dumps(prc, ensure_ascii=False, indent=4))
     buffer.seek(0); return buffer
 
-# --- 初始化 ---
-settings_data = load_settings(); price_data = load_prices(); df = load_data()
+# --- 🚀 初始化 (關鍵修正：只在啟動時讀取一次雲端，之後用 Session State) ---
+if 'settings_data' not in st.session_state:
+    st.session_state.settings_data = load_settings_from_cloud()
+if 'price_data' not in st.session_state:
+    st.session_state.price_data = load_prices_from_cloud()
+
+# 使用 Session State 作為全域變數，確保流暢
+settings_data = st.session_state.settings_data
+price_data = st.session_state.price_data
+df = load_data()
 CAT_CONFIG_LIST = settings_data["cat_config"]
+
 if 'mem_project' not in st.session_state: st.session_state.mem_project = settings_data["projects"][0]
 if 'mem_date' not in st.session_state: st.session_state.mem_date = datetime.now()
 if 'last_check_date' not in st.session_state: st.session_state.last_check_date = st.session_state.mem_date
@@ -202,7 +232,6 @@ if 'last_check_date' not in st.session_state: st.session_state.last_check_date =
 # ==========================================
 # 主介面
 # ==========================================
-# 修改 3: 更新主標題
 st.title("🏗️ 專案施工管理系統 PRO Max (線上版)")
 
 with st.sidebar:
@@ -218,12 +247,15 @@ with st.sidebar:
     st.markdown(f"### {global_date} {day_str}")
     st.session_state.mem_project = global_project; st.session_state.mem_date = global_date
     current_items = settings_data["items"].get(global_project, {})
-    if st.button("🔄 強制重新整理"): st.cache_resource.clear(); st.rerun()
+    if st.button("🔄 強制重新整理"): 
+        st.cache_resource.clear()
+        for key in list(st.session_state.keys()): del st.session_state[key]
+        st.rerun()
     if st.button("🔒 登出"): st.session_state.logged_in = False; st.rerun()
 
 tab_entry, tab_data, tab_dash, tab_settings = st.tabs(["📝 快速日報輸入", "🛠️ 報表總覽與編輯修正", "📊 成本儀表板", "🏗️ 專案管理區"])
 
-# === Tab 1: 快速日報輸入 (維持原樣：包含備註與自動抓取) ===
+# === Tab 1: 快速日報輸入 (維持原樣) ===
 with tab_entry:
     st.info(f"正在填寫：**{global_project}** / **{global_date}**")
     d_key = str(global_date); handled_keys = []
@@ -316,7 +348,7 @@ with tab_entry:
                         if st.form_submit_button("💾 儲存資料"):
                             append_data(global_date, global_project, conf["key"], conf["type"], it, u, q, p, tx); st.rerun()
 
-# === Tab 2: 報表總覽 (維持原樣：排序與更新正常) ===
+# === Tab 2: 報表總覽 ===
 with tab_data:
     proj_df = df[df['專案'] == global_project].copy()
     if proj_df.empty: st.info(f"專案【{global_project}】無資料")
@@ -409,7 +441,7 @@ with tab_dash:
                         st.bar_chart(c_data.groupby('名稱')['總價'].sum().reset_index().sort_values('總價', ascending=False), x='名稱', y='總價')
             else: st.info(f"{sel_m} 尚無金額紀錄。")
 
-# === Tab 4: 🏗️ 專案管理區 (維持原樣) ===
+# === Tab 4: 🏗️ 專案管理區 (表單化輸入) ===
 with tab_settings:
     st.header("🏗️ 專案管理區")
     with st.expander("📦 資料備份中心", expanded=False):
@@ -418,8 +450,9 @@ with tab_settings:
         if uploaded_file and st.button("⚠️ 確認執行還原"):
             try:
                 if uploaded_file.name.endswith('.json'):
-                    target_path = SETTINGS_FILE if "settings" in uploaded_file.name else PRICES_FILE
-                    with open(target_path, 'wb') as f: f.write(uploaded_file.getbuffer())
+                    data = json.load(uploaded_file)
+                    if "settings" in uploaded_file.name: save_settings_to_cloud(data)
+                    else: save_prices_to_cloud(data)
                     st.success(f"設定檔還原成功！"); time.sleep(1); st.rerun()
                 elif uploaded_file.name.endswith('.csv'):
                     df_new = pd.read_csv(uploaded_file, encoding='utf-8-sig'); save_dataframe(df_new)
@@ -429,26 +462,30 @@ with tab_settings:
                             settings_data["projects"].append(p)
                             if p not in settings_data["items"]: settings_data["items"][p] = copy.deepcopy(DEFAULT_ITEMS)
                             changed = True
-                    if changed: save_settings(settings_data)
+                    if changed: save_settings_to_cloud(settings_data)
                     st.success("資料還原成功！"); time.sleep(1); st.rerun()
                 elif uploaded_file.name.endswith('.zip'):
-                    with zipfile.ZipFile(uploaded_file, 'r') as z: z.extractall(".")
-                    st.success("全環境還原成功！"); time.sleep(1); st.rerun()
+                    st.warning("雲端版不支援 ZIP 還原，請解壓縮後分別上傳 JSON 與 CSV。")
             except Exception as e: st.error(f"還原失敗：{e}")
+            
     with st.expander("1. 專案管理", expanded=True):
-        c1, c2, c3 = st.columns([2, 2, 1])
-        with c1:
-            np_in = st.text_input("新增專案名稱")
-            if st.button("➕ 新增專案") and np_in:
-                settings_data["projects"].append(np_in); settings_data["items"][np_in] = copy.deepcopy(DEFAULT_ITEMS); save_settings(settings_data); st.rerun()
-        with c2:
-            rp_in = st.text_input("修改名稱為", value=global_project)
-            if st.button("✏️ 確認改名") and rp_in != global_project:
+        # 修正：使用 form 防止輸入時觸發上傳
+        with st.form("add_project_form"):
+            c1, c2 = st.columns([3, 1])
+            np_in = c1.text_input("新增專案名稱")
+            if c2.form_submit_button("➕ 新增專案") and np_in:
+                settings_data["projects"].append(np_in); settings_data["items"][np_in] = copy.deepcopy(DEFAULT_ITEMS); save_settings_to_cloud(settings_data); st.rerun()
+        
+        with st.form("rename_project_form"):
+            c1, c2 = st.columns([3, 1])
+            rp_in = c1.text_input("修改當前專案名稱", value=global_project)
+            if c2.form_submit_button("✏️ 確認改名") and rp_in != global_project:
                 settings_data["projects"][settings_data["projects"].index(global_project)] = rp_in
-                settings_data["items"][rp_in] = settings_data["items"].pop(global_project); save_settings(settings_data); st.rerun()
-        with c3:
-            if len(proj_list) > 1 and st.button("🗑️ 刪除專案", type="primary"):
-                settings_data["projects"].remove(global_project); save_settings(settings_data); st.rerun()
+                settings_data["items"][rp_in] = settings_data["items"].pop(global_project); save_settings_to_cloud(settings_data); st.rerun()
+        
+        if len(proj_list) > 1 and st.button("🗑️ 刪除當前專案", type="primary"):
+            settings_data["projects"].remove(global_project); save_settings_to_cloud(settings_data); st.rerun()
+
     st.divider(); st.subheader("📋 選單項目管理")
     with st.expander("1. 從其他專案匯入選單範本", expanded=False):
         others = [p for p in proj_list if p != global_project]
@@ -464,14 +501,17 @@ with tab_settings:
                         if k not in current_items: current_items[k] = []
                         for it_m in v:
                             if it_m not in current_items[k]: current_items[k].append(it_m)
-                    save_settings(settings_data); st.session_state.imp_state = False; st.rerun()
+                    save_settings_to_cloud(settings_data); st.session_state.imp_state = False; st.rerun()
                 if st.button("否", key="n_i"): st.session_state.imp_state = False; st.rerun()
+    
     with st.expander("2. 新增管理項目 (新增大標題)", expanded=False):
-        c1, c2, c3 = st.columns([2, 2, 1])
-        n_bn = c1.text_input("大標題名稱 (如: 07.安全檢查)")
-        n_bt = c2.selectbox("類型", ["text", "usage", "cost"], format_func=lambda x: {"text":"文字","usage":"數量","cost":"成本"}[x])
-        if c3.button("新增標題") and n_bn:
-            nk = n_bn.split('.')[-1].strip(); add_new_category_block(nk, n_bn, n_bt, settings_data); st.rerun()
+        with st.form("add_cat_form"):
+            c1, c2, c3 = st.columns([2, 2, 1])
+            n_bn = c1.text_input("大標題名稱 (如: 07.安全檢查)")
+            n_bt = c2.selectbox("類型", ["text", "usage", "cost"], format_func=lambda x: {"text":"文字","usage":"數量","cost":"成本"}[x])
+            if c3.form_submit_button("新增標題") and n_bn:
+                nk = n_bn.split('.')[-1].strip(); add_new_category_block(nk, n_bn, n_bt, settings_data); st.rerun()
+
     with st.expander("3. 既有選單項目管理 (修改大標題 / 細項內容)", expanded=True):
         st.markdown("##### 修改大標題名稱")
         for i, conf in enumerate(CAT_CONFIG_LIST):
@@ -480,18 +520,25 @@ with tab_settings:
             nd_in = c2.text_input(f"新標題 {i}", value=conf['display'], label_visibility="collapsed")
             if nd_in != conf['display'] and st.button("更新", key=f"u_{i}"): update_category_config(i, nd_in, settings_data); st.rerun()
             if c4.button("🗑️", key=f"d_{i}"): delete_category_block(i, settings_data); st.rerun()
+        
         st.markdown("---"); st.markdown("##### 管理項目細項內容")
         target_v = st.selectbox("選擇類別", [c["display"] for c in CAT_CONFIG_LIST])
         t_conf = next((c for c in CAT_CONFIG_LIST if c["display"] == target_v), None)
         if t_conf:
             tk = t_conf["key"]; ct = t_conf["type"]; c_list = current_items.get(tk, [])
-            c_a, c_b = st.columns([3, 1])
-            ni_in = c_a.text_input(f"在【{target_v}】新增項目內容", key=f"no_{tk}")
-            if c_b.button("➕ 加入項目", key=f"ba_{tk}") and ni_in: current_items[tk].append(ni_in); save_settings(settings_data); st.rerun()
+            
+            # 修正：使用 form 包裹新增輸入框，防止輸入時重新整理
+            with st.form(f"add_item_form_{tk}"):
+                c_a, c_b = st.columns([3, 1])
+                ni_in = c_a.text_input(f"在【{target_v}】新增項目內容", key=f"no_{tk}")
+                if c_b.form_submit_button("➕ 加入項目") and ni_in:
+                    current_items[tk].append(ni_in); save_settings_to_cloud(settings_data); st.rerun()
+            
             st.markdown(f"**目前項目清單 ({len(c_list)})**")
             if ct == 'text': h1, h2, h3, h4 = st.columns([3, 3, 1, 1]); h1.caption("原名稱"); h2.caption("新名稱"); h3.caption("存"); h4.caption("刪")
             elif ct == 'usage': h1, h2, h3, h4, h5 = st.columns([2, 2, 2, 1, 1]); h1.caption("原名稱"); h2.caption("新名稱"); h3.caption("預設單位"); h4.caption("存"); h5.caption("刪")
             else: h1, h2, h3, h4, h5, h6 = st.columns([2, 2, 1, 1, 0.5, 0.5]); h1.caption("原名稱"); h2.caption("新名稱"); h3.caption("單價"); h4.caption("單位"); h5.caption("存"); h6.caption("刪")
+            
             for it_v in c_list:
                 p_i = price_data.get(global_project, {}).get(tk, {}).get(it_v, {"price": 0, "unit": "式"})
                 if ct == 'text':
@@ -501,7 +548,7 @@ with tab_settings:
                     if r3.button("💾", key=f"s_{tk}_{it_v}"):
                         if rnn_in != it_v: update_item_name(global_project, tk, it_v, rnn_in, settings_data, price_data)
                         st.toast("已更新"); st.rerun()
-                    if r4.button("🗑️", key=f"dl_{tk}_{it_v}"): current_items[tk].remove(it_v); save_settings(settings_data); st.rerun()
+                    if r4.button("🗑️", key=f"dl_{tk}_{it_v}"): current_items[tk].remove(it_v); save_settings_to_cloud(settings_data); st.rerun()
                 elif ct == 'usage':
                     r1, r2, r3, r4, r5 = st.columns([2, 2, 2, 1, 1])
                     with r1: st.text(it_v)
@@ -510,8 +557,8 @@ with tab_settings:
                     if r4.button("💾", key=f"s_{tk}_{it_v}"):
                         if rnn_in != it_v: update_item_name(global_project, tk, it_v, rnn_in, settings_data, price_data)
                         if tk not in price_data[global_project]: price_data[global_project][tk] = {}
-                        price_data[global_project][tk][rnn_in if rnn_in != it_v else it_v] = {"price": 0, "unit": nu_in}; save_prices(price_data); st.rerun()
-                    if r5.button("🗑️", key=f"dl_{tk}_{it_v}"): current_items[tk].remove(it_v); save_settings(settings_data); st.rerun()
+                        price_data[global_project][tk][rnn_in if rnn_in != it_v else it_v] = {"price": 0, "unit": nu_in}; save_prices_to_cloud(price_data); st.rerun()
+                    if r5.button("🗑️", key=f"dl_{tk}_{it_v}"): current_items[tk].remove(it_v); save_settings_to_cloud(settings_data); st.rerun()
                 else:
                     r1, r2, r3, r4, r5, r6 = st.columns([2, 2, 1, 1, 0.5, 0.5])
                     with r1: st.text(it_v)
@@ -521,5 +568,5 @@ with tab_settings:
                     if r5.button("💾", key=f"s_{tk}_{it_v}"):
                         if rnn_in != it_v: update_item_name(global_project, tk, it_v, rnn_in, settings_data, price_data)
                         if tk not in price_data[global_project]: price_data[global_project][tk] = {}
-                        price_data[global_project][tk][rnn_in if rnn_in != it_v else it_v] = {"price": np_in, "unit": nu_in}; save_prices(price_data); st.rerun()
-                    if r6.button("🗑️", key=f"dl_{tk}_{it_v}"): current_items[tk].remove(it_v); save_settings(settings_data); st.rerun()
+                        price_data[global_project][tk][rnn_in if rnn_in != it_v else it_v] = {"price": np_in, "unit": nu_in}; save_prices_to_cloud(price_data); st.rerun()
+                    if r6.button("🗑️", key=f"dl_{tk}_{it_v}"): current_items[tk].remove(it_v); save_settings_to_cloud(settings_data); st.rerun()
