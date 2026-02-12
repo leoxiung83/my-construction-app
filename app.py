@@ -68,7 +68,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==========================================
-# 2. 核心邏輯 (雲端化升級)
+# 2. 核心邏輯 (雲端化升級 - 修正 API 錯誤)
 # ==========================================
 @st.cache_resource
 def get_google_client():
@@ -103,19 +103,26 @@ def get_date_info(date_obj):
     if date_str in HOLIDAYS: return f"🔴 {w_str} ★{HOLIDAYS[date_str]}", True 
     return (f"🔴 {w_str}", True) if date_obj.weekday() >= 5 else (f"{w_str}", False)
 
-# --- 雲端設定存取函數 ---
+# --- 雲端設定存取函數 (API 修復版) ---
 def load_settings_from_cloud():
     sheet = get_sheet("settings")
     default_settings = {"projects": ["預設專案"], "items": {"預設專案": copy.deepcopy(DEFAULT_ITEMS)}, "cat_config": copy.deepcopy(DEFAULT_CAT_CONFIG)}
     if not sheet: return default_settings
     try:
+        # 讀取 A1 儲存格的值
         data = sheet.acell('A1').value
         return json.loads(data) if data else default_settings
     except: return default_settings
 
 def save_settings_to_cloud(data):
     sheet = get_sheet("settings")
-    if sheet: sheet.update('A1', json.dumps(data, ensure_ascii=False))
+    if sheet:
+        try:
+            json_str = json.dumps(data, ensure_ascii=False)
+            # 修正: 使用 values=[[內容]] 並指定 range_name，符合新版 gspread 規範
+            sheet.update(values=[[json_str]], range_name='A1')
+        except Exception as e:
+            st.error(f"雲端存檔錯誤 (可能是資料量過大): {e}")
 
 def load_prices_from_cloud():
     sheet = get_sheet("item_prices")
@@ -127,7 +134,13 @@ def load_prices_from_cloud():
 
 def save_prices_to_cloud(data):
     sheet = get_sheet("item_prices")
-    if sheet: sheet.update('A1', json.dumps(data, ensure_ascii=False))
+    if sheet:
+        try:
+            json_str = json.dumps(data, ensure_ascii=False)
+            # 修正: 使用 values=[[內容]] 並指定 range_name
+            sheet.update(values=[[json_str]], range_name='A1')
+        except Exception as e:
+            st.error(f"雲端存檔錯誤: {e}")
 
 def load_data():
     cols = ['日期', '專案', '類別', '名稱', '單位', '數量', '單價', '總價', '備註', '月份']
