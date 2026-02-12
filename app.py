@@ -68,7 +68,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==========================================
-# 2. 核心邏輯 (優化：引入 Session State 快取)
+# 2. 核心邏輯 (雲端化升級 - 修正 API 錯誤)
 # ==========================================
 @st.cache_resource
 def get_google_client():
@@ -103,25 +103,28 @@ def get_date_info(date_obj):
     if date_str in HOLIDAYS: return f"🔴 {w_str} ★{HOLIDAYS[date_str]}", True 
     return (f"🔴 {w_str}", True) if date_obj.weekday() >= 5 else (f"{w_str}", False)
 
-# --- 雲端設定存取函數 ---
+# --- 雲端設定存取函數 (API 修復版) ---
 def load_settings_from_cloud():
     sheet = get_sheet("settings")
     default_settings = {"projects": ["預設專案"], "items": {"預設專案": copy.deepcopy(DEFAULT_ITEMS)}, "cat_config": copy.deepcopy(DEFAULT_CAT_CONFIG)}
     if not sheet: return default_settings
     try:
+        # 讀取 A1 儲存格的值
         data = sheet.acell('A1').value
         return json.loads(data) if data else default_settings
     except: return default_settings
 
 def save_settings_to_cloud(data):
-    # 同步更新 session_state，確保介面即時反應
+    # 同步更新 session_state
     st.session_state.settings_data = data
     sheet = get_sheet("settings")
     if sheet:
         try:
             json_str = json.dumps(data, ensure_ascii=False)
+            # 修正: 使用 values=[[內容]] 並指定 range_name，符合新版 gspread 規範
             sheet.update(values=[[json_str]], range_name='A1')
-        except Exception as e: st.error(f"雲端存檔錯誤: {e}")
+        except Exception as e:
+            st.error(f"雲端存檔錯誤 (可能是資料量過大): {e}")
 
 def load_prices_from_cloud():
     sheet = get_sheet("item_prices")
@@ -138,12 +141,14 @@ def save_prices_to_cloud(data):
     if sheet:
         try:
             json_str = json.dumps(data, ensure_ascii=False)
+            # 修正: 使用 values=[[內容]] 並指定 range_name
             sheet.update(values=[[json_str]], range_name='A1')
-        except Exception as e: st.error(f"雲端存檔錯誤: {e}")
+        except Exception as e:
+            st.error(f"雲端存檔錯誤: {e}")
 
 def load_data():
     cols = ['日期', '專案', '類別', '名稱', '單位', '數量', '單價', '總價', '備註', '月份']
-    sheet = get_sheet("sheet1")
+    sheet = get_sheet("sheet1") # 預設工作表
     if not sheet: return pd.DataFrame(columns=cols)
     try:
         data = sheet.get_all_records()
@@ -173,7 +178,7 @@ def append_data(date, project, category, category_type, name, unit, qty, price, 
     sheet = get_sheet("sheet1")
     if sheet: sheet.append_row(row)
 
-# 修正：直接操作 session_state 並上傳
+# 修正：更新項目名稱時同時更新雲端設定
 def update_item_name(project, category, old_name, new_name, settings, prices):
     if old_name == new_name: return False
     curr_list = settings["items"][project].get(category, [])
@@ -207,19 +212,19 @@ def create_zip_backup():
     with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         df_bak = load_data()
         zip_file.writestr("construction_data.csv", df_bak.to_csv(index=False))
+        # 備份時從雲端抓取最新設定
         stg = load_settings_from_cloud()
         prc = load_prices_from_cloud()
         zip_file.writestr("settings.json", json.dumps(stg, ensure_ascii=False, indent=4))
         zip_file.writestr("item_prices.json", json.dumps(prc, ensure_ascii=False, indent=4))
     buffer.seek(0); return buffer
 
-# --- 🚀 初始化 (關鍵修正：只在啟動時讀取一次雲端，之後用 Session State) ---
+# --- 初始化 (改從雲端讀取) ---
 if 'settings_data' not in st.session_state:
     st.session_state.settings_data = load_settings_from_cloud()
 if 'price_data' not in st.session_state:
     st.session_state.price_data = load_prices_from_cloud()
 
-# 使用 Session State 作為全域變數，確保流暢
 settings_data = st.session_state.settings_data
 price_data = st.session_state.price_data
 df = load_data()
@@ -255,7 +260,7 @@ with st.sidebar:
 
 tab_entry, tab_data, tab_dash, tab_settings = st.tabs(["📝 快速日報輸入", "🛠️ 報表總覽與編輯修正", "📊 成本儀表板", "🏗️ 專案管理區"])
 
-# === Tab 1: 快速日報輸入 (維持原樣) ===
+# === Tab 1: 快速日報輸入 ===
 with tab_entry:
     st.info(f"正在填寫：**{global_project}** / **{global_date}**")
     d_key = str(global_date); handled_keys = []
