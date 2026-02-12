@@ -252,9 +252,13 @@ with st.sidebar:
     st.markdown(f"### {global_date} {day_str}")
     st.session_state.mem_project = global_project; st.session_state.mem_date = global_date
     current_items = settings_data["items"].get(global_project, {})
+    # 修正：強制重新整理時，保留登入狀態
     if st.button("🔄 強制重新整理"): 
         st.cache_resource.clear()
-        for key in list(st.session_state.keys()): del st.session_state[key]
+        # 清除除了登入狀態以外的所有快取
+        for key in list(st.session_state.keys()):
+            if key != 'logged_in':
+                del st.session_state[key]
         st.rerun()
     if st.button("🔒 登出"): st.session_state.logged_in = False; st.rerun()
 
