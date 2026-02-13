@@ -68,7 +68,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==========================================
-# 2. 核心邏輯 (雲端化升級 - 修正 API 錯誤)
+# 2. 核心邏輯
 # ==========================================
 @st.cache_resource
 def get_google_client():
@@ -103,28 +103,24 @@ def get_date_info(date_obj):
     if date_str in HOLIDAYS: return f"🔴 {w_str} ★{HOLIDAYS[date_str]}", True 
     return (f"🔴 {w_str}", True) if date_obj.weekday() >= 5 else (f"{w_str}", False)
 
-# --- 雲端設定存取函數 (API 修復版) ---
+# --- 雲端設定存取函數 ---
 def load_settings_from_cloud():
     sheet = get_sheet("settings")
     default_settings = {"projects": ["預設專案"], "items": {"預設專案": copy.deepcopy(DEFAULT_ITEMS)}, "cat_config": copy.deepcopy(DEFAULT_CAT_CONFIG)}
     if not sheet: return default_settings
     try:
-        # 讀取 A1 儲存格的值
         data = sheet.acell('A1').value
         return json.loads(data) if data else default_settings
     except: return default_settings
 
 def save_settings_to_cloud(data):
-    # 同步更新 session_state
     st.session_state.settings_data = data
     sheet = get_sheet("settings")
     if sheet:
         try:
             json_str = json.dumps(data, ensure_ascii=False)
-            # 修正: 使用 values=[[內容]] 並指定 range_name，符合新版 gspread 規範
             sheet.update(values=[[json_str]], range_name='A1')
-        except Exception as e:
-            st.error(f"雲端存檔錯誤 (可能是資料量過大): {e}")
+        except Exception as e: st.error(f"雲端存檔錯誤: {e}")
 
 def load_prices_from_cloud():
     sheet = get_sheet("item_prices")
@@ -135,20 +131,17 @@ def load_prices_from_cloud():
     except: return {}
 
 def save_prices_to_cloud(data):
-    # 同步更新 session_state
     st.session_state.price_data = data
     sheet = get_sheet("item_prices")
     if sheet:
         try:
             json_str = json.dumps(data, ensure_ascii=False)
-            # 修正: 使用 values=[[內容]] 並指定 range_name
             sheet.update(values=[[json_str]], range_name='A1')
-        except Exception as e:
-            st.error(f"雲端存檔錯誤: {e}")
+        except Exception as e: st.error(f"雲端存檔錯誤: {e}")
 
 def load_data():
     cols = ['日期', '專案', '類別', '名稱', '單位', '數量', '單價', '總價', '備註', '月份']
-    sheet = get_sheet("sheet1") # 預設工作表
+    sheet = get_sheet("sheet1")
     if not sheet: return pd.DataFrame(columns=cols)
     try:
         data = sheet.get_all_records()
@@ -178,12 +171,17 @@ def append_data(date, project, category, category_type, name, unit, qty, price, 
     sheet = get_sheet("sheet1")
     if sheet: sheet.append_row(row)
 
-# 修正：更新項目名稱時同時更新雲端設定
+# 修正：防止 KeyError 並確保只在按下按鈕時更新
 def update_item_name(project, category, old_name, new_name, settings, prices):
     if old_name == new_name: return False
     curr_list = settings["items"][project].get(category, [])
     if new_name in curr_list: return False 
     if old_name in curr_list: curr_list[curr_list.index(old_name)] = new_name
+    
+    # 防呆：確保專案 Key 存在
+    if project not in prices: prices[project] = {}
+    if category not in prices[project]: prices[project][category] = {}
+
     if project in prices and category in prices[project] and old_name in prices[project][category]:
         prices[project][category][new_name] = prices[project][category].pop(old_name)
         save_prices_to_cloud(prices)
@@ -212,14 +210,13 @@ def create_zip_backup():
     with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         df_bak = load_data()
         zip_file.writestr("construction_data.csv", df_bak.to_csv(index=False))
-        # 備份時從雲端抓取最新設定
         stg = load_settings_from_cloud()
         prc = load_prices_from_cloud()
         zip_file.writestr("settings.json", json.dumps(stg, ensure_ascii=False, indent=4))
         zip_file.writestr("item_prices.json", json.dumps(prc, ensure_ascii=False, indent=4))
     buffer.seek(0); return buffer
 
-# --- 初始化 (改從雲端讀取) ---
+# --- 初始化 ---
 if 'settings_data' not in st.session_state:
     st.session_state.settings_data = load_settings_from_cloud()
 if 'price_data' not in st.session_state:
@@ -252,13 +249,10 @@ with st.sidebar:
     st.markdown(f"### {global_date} {day_str}")
     st.session_state.mem_project = global_project; st.session_state.mem_date = global_date
     current_items = settings_data["items"].get(global_project, {})
-    # 修正：強制重新整理時，保留登入狀態
     if st.button("🔄 強制重新整理"): 
         st.cache_resource.clear()
-        # 清除除了登入狀態以外的所有快取
         for key in list(st.session_state.keys()):
-            if key != 'logged_in':
-                del st.session_state[key]
+            if key != 'logged_in': del st.session_state[key]
         st.rerun()
     if st.button("🔒 登出"): st.session_state.logged_in = False; st.rerun()
 
@@ -478,7 +472,6 @@ with tab_settings:
             except Exception as e: st.error(f"還原失敗：{e}")
             
     with st.expander("1. 專案管理", expanded=True):
-        # 修正：使用 form 防止輸入時觸發上傳
         with st.form("add_project_form"):
             c1, c2 = st.columns([3, 1])
             np_in = c1.text_input("新增專案名稱")
@@ -536,7 +529,6 @@ with tab_settings:
         if t_conf:
             tk = t_conf["key"]; ct = t_conf["type"]; c_list = current_items.get(tk, [])
             
-            # 修正：使用 form 包裹新增輸入框，防止輸入時重新整理
             with st.form(f"add_item_form_{tk}"):
                 c_a, c_b = st.columns([3, 1])
                 ni_in = c_a.text_input(f"在【{target_v}】新增項目內容", key=f"no_{tk}")
@@ -544,12 +536,15 @@ with tab_settings:
                     current_items[tk].append(ni_in); save_settings_to_cloud(settings_data); st.rerun()
             
             st.markdown(f"**目前項目清單 ({len(c_list)})**")
+            # 修正標題行，加入"單價"與"單位"
             if ct == 'text': h1, h2, h3, h4 = st.columns([3, 3, 1, 1]); h1.caption("原名稱"); h2.caption("新名稱"); h3.caption("存"); h4.caption("刪")
             elif ct == 'usage': h1, h2, h3, h4, h5 = st.columns([2, 2, 2, 1, 1]); h1.caption("原名稱"); h2.caption("新名稱"); h3.caption("預設單位"); h4.caption("存"); h5.caption("刪")
             else: h1, h2, h3, h4, h5, h6 = st.columns([2, 2, 1, 1, 0.5, 0.5]); h1.caption("原名稱"); h2.caption("新名稱"); h3.caption("單價"); h4.caption("單位"); h5.caption("存"); h6.caption("刪")
             
             for it_v in c_list:
+                # 安全獲取單價，防止 KeyError
                 p_i = price_data.get(global_project, {}).get(tk, {}).get(it_v, {"price": 0, "unit": "式"})
+                
                 if ct == 'text':
                     r1, r2, r3, r4 = st.columns([3, 3, 1, 1])
                     with r1: st.text(it_v)
@@ -565,6 +560,8 @@ with tab_settings:
                     with r3: nu_in = r3.text_input("U", value=p_i["unit"], key=f"u_{tk}_{it_v}", label_visibility="collapsed")
                     if r4.button("💾", key=f"s_{tk}_{it_v}"):
                         if rnn_in != it_v: update_item_name(global_project, tk, it_v, rnn_in, settings_data, price_data)
+                        # 防呆與初始化 Key
+                        if global_project not in price_data: price_data[global_project] = {}
                         if tk not in price_data[global_project]: price_data[global_project][tk] = {}
                         price_data[global_project][tk][rnn_in if rnn_in != it_v else it_v] = {"price": 0, "unit": nu_in}; save_prices_to_cloud(price_data); st.rerun()
                     if r5.button("🗑️", key=f"dl_{tk}_{it_v}"): current_items[tk].remove(it_v); save_settings_to_cloud(settings_data); st.rerun()
@@ -576,6 +573,8 @@ with tab_settings:
                     with r4: nu_in = r4.text_input("U", value=p_i["unit"], key=f"u_{tk}_{it_v}", label_visibility="collapsed")
                     if r5.button("💾", key=f"s_{tk}_{it_v}"):
                         if rnn_in != it_v: update_item_name(global_project, tk, it_v, rnn_in, settings_data, price_data)
+                        # 防呆與初始化 Key
+                        if global_project not in price_data: price_data[global_project] = {}
                         if tk not in price_data[global_project]: price_data[global_project][tk] = {}
                         price_data[global_project][tk][rnn_in if rnn_in != it_v else it_v] = {"price": np_in, "unit": nu_in}; save_prices_to_cloud(price_data); st.rerun()
                     if r6.button("🗑️", key=f"dl_{tk}_{it_v}"): current_items[tk].remove(it_v); save_settings_to_cloud(settings_data); st.rerun()
